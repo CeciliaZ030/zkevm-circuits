@@ -4,14 +4,17 @@ use crate::{
         cell_manager::Cell,
         constraint_builder::{ConstraintBuilder, RLCable, RLCableValue},
     },
-    matchr, matchw,
-    mpt_circuit::param::{RLP_LIST_LONG, RLP_LIST_SHORT, RLP_SHORT},
+    matchr, matchw, 
+    mpt_circuit::{
+        FixedTableTag,
+        param::{RLP_LIST_LONG, RLP_LIST_SHORT, RLP_SHORT}
+    },
     util::Expr,
 };
 use eth_types::Field;
 use gadgets::util::{not, Scalar};
 use halo2_proofs::{
-    circuit::Region,
+    circuit::{Region, self},
     plonk::{Error, Expression},
 };
 
@@ -37,12 +40,26 @@ pub(crate) struct RLPListWitness {
 
 impl<F: Field> RLPListGadget<F> {
     pub(crate) fn construct(cb: &mut ConstraintBuilder<F>, bytes: &[Expression<F>]) -> Self {
-        // TODO(Brecht): add lookup/LtGadget
+        let is_short = cb.query_cell();
+        let is_long =  cb.query_cell();
+        let is_very_long = cb.query_cell();
+        let is_string = cb.query_cell();
+        
+        circuit!([meta, cb], {
+            require!(vec![
+                FixedTableTag::RLP.expr(), 
+                bytes[0].clone(), 
+                is_string.expr(), 
+                is_short.expr(), 
+                is_very_long.expr()] => @"fixed"
+            );
+        });
+
         RLPListGadget {
-            is_short: cb.query_cell(),
-            is_long: cb.query_cell(),
-            is_very_long: cb.query_cell(),
-            is_string: cb.query_cell(),
+            is_short,
+            is_long,
+            is_very_long,
+            is_string,
             bytes: bytes.to_vec(),
         }
     }
@@ -61,8 +78,11 @@ impl<F: Field> RLPListGadget<F> {
         let mut is_very_long = false;
         let mut is_string = false;
         match bytes[0] {
+            // 192 - 247
             RLP_LIST_SHORT..=RLP_LIST_LONG => is_short = true,
+            // 248
             RLP_LIST_LONG_1 => is_long = true,
+            // 249
             RLP_LIST_LONG_2 => is_very_long = true,
             _ => is_string = true,
         }
@@ -261,12 +281,26 @@ pub(crate) struct RLPValueWitness {
 
 impl<F: Field> RLPValueGadget<F> {
     pub(crate) fn construct(cb: &mut ConstraintBuilder<F>, bytes: &[Expression<F>]) -> Self {
-        // TODO(Brecht): add lookup
+        let is_short = cb.query_cell();
+        let is_long =  cb.query_cell();
+        let is_very_long = cb.query_cell();
+        let is_list = cb.query_cell();
+        
+        circuit!([meta, cb], {
+            require!(vec![
+                FixedTableTag::RLP.expr(), 
+                bytes[0].clone(), 
+                not::expr(is_list.expr()), 
+                is_short.expr(), 
+                is_very_long.expr()] => @"fixed"
+            );
+        });
+
         RLPValueGadget {
-            is_short: cb.query_cell(),
-            is_long: cb.query_cell(),
-            is_very_long: cb.query_cell(),
-            is_list: cb.query_cell(),
+            is_short,
+            is_long,
+            is_very_long,
+            is_list,
             bytes: bytes.to_vec(),
         }
     }
@@ -286,8 +320,11 @@ impl<F: Field> RLPValueGadget<F> {
         let mut is_very_long = false;
         let mut is_list = false;
         match bytes[0] {
+            // 0 - 127
             0..=RLP_SHORT_INCLUSIVE => is_short = true,
+            // 128 - 183
             RLP_SHORT..=RLP_LONG => is_long = true,
+            // 189 - 191
             RLP_LONG_EXCLUSIVE..=RLP_VALUE_MAX => is_very_long = true,
             _ => is_list = true,
         }

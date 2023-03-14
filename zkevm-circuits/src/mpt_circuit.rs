@@ -101,7 +101,7 @@ pub struct MPTConfig<F> {
     pub(crate) managed_columns: Vec<Column<Advice>>,
     pub(crate) memory: Memory<F>,
     keccak_table: KeccakTable,
-    fixed_table: [Column<Fixed>; 3],
+    fixed_table: [Column<Fixed>; 5],
     state_machine: StateMachineConfig<F>,
     pub(crate) is_start: Column<Advice>,
     pub(crate) is_branch: Column<Advice>,
@@ -127,6 +127,8 @@ pub enum FixedTableTag {
     RangeKeyLen256,
     /// For checking there are 0s after the RLP stream ends
     RangeKeyLen16,
+    /// For checking RLP
+    RLP,
 }
 
 impl_expr!(FixedTableTag);
@@ -164,7 +166,7 @@ impl<F: Field> MPTConfig<F> {
 
         let main = MainCols::new(meta);
 
-        let fixed_table: [Column<Fixed>; 3] = (0..3)
+        let fixed_table: [Column<Fixed>; 5] = (0..5)
             .map(|_| meta.fixed_column())
             .collect::<Vec<_>>()
             .try_into()
@@ -870,6 +872,60 @@ impl<F: Field> MPTConfig<F> {
                     offset += 1;
                 }
 
+                // Rlp prefixes table [rlp_tag, byte, is_string, is_short, is_verylong]
+                for ind in 0..=127 {
+                    // short string
+                    assignf!(region, (self.fixed_table[0], offset) => FixedTableTag::RLP.scalar())?;
+                    assignf!(region, (self.fixed_table[1], offset) => ind.scalar())?;
+                    assignf!(region, (self.fixed_table[2], offset) => true.scalar())?;
+                    assignf!(region, (self.fixed_table[3], offset) => true.scalar())?;
+                    assignf!(region, (self.fixed_table[4], offset) => false.scalar())?;
+                    offset += 1;
+                }
+                for ind in 128..=183 {
+                    // long string
+                    assignf!(region, (self.fixed_table[0], offset) => FixedTableTag::RLP.scalar())?;
+                    assignf!(region, (self.fixed_table[1], offset) => ind.scalar())?;
+                    assignf!(region, (self.fixed_table[2], offset) => true.scalar())?;
+                    assignf!(region, (self.fixed_table[3], offset) => false.scalar())?;
+                    assignf!(region, (self.fixed_table[4], offset) => false.scalar())?;
+                    offset += 1;
+                }
+                for ind in 184..=191 {
+                    // very long string
+                    assignf!(region, (self.fixed_table[0], offset) => FixedTableTag::RLP.scalar())?;
+                    assignf!(region, (self.fixed_table[1], offset) => ind.scalar())?;
+                    assignf!(region, (self.fixed_table[2], offset) => true.scalar())?;
+                    assignf!(region, (self.fixed_table[3], offset) => false.scalar())?;
+                    assignf!(region, (self.fixed_table[4], offset) => true.scalar())?;
+                    offset += 1;
+                }
+                for ind in 192..=247 {
+                    // short list
+                    assignf!(region, (self.fixed_table[0], offset) => FixedTableTag::RLP.scalar())?;
+                    assignf!(region, (self.fixed_table[1], offset) => ind.scalar())?;
+                    assignf!(region, (self.fixed_table[2], offset) => false.scalar())?;
+                    assignf!(region, (self.fixed_table[3], offset) => true.scalar())?;
+                    assignf!(region, (self.fixed_table[4], offset) => false.scalar())?;
+                    offset += 1;
+                }
+                // 248
+                // long list
+                assignf!(region, (self.fixed_table[0], offset) => FixedTableTag::RLP.scalar())?;
+                assignf!(region, (self.fixed_table[1], offset) => 248i32.scalar())?;
+                assignf!(region, (self.fixed_table[2], offset) => false.scalar())?;
+                assignf!(region, (self.fixed_table[3], offset) => false.scalar())?;
+                assignf!(region, (self.fixed_table[4], offset) => false.scalar())?;
+                offset += 1;
+                // 249
+                // very long list
+                assignf!(region, (self.fixed_table[0], offset) => FixedTableTag::RLP.scalar())?;
+                assignf!(region, (self.fixed_table[1], offset) => 249i32.scalar())?;
+                assignf!(region, (self.fixed_table[2], offset) => false.scalar())?;
+                assignf!(region, (self.fixed_table[3], offset) => false.scalar())?;
+                assignf!(region, (self.fixed_table[4], offset) => true.scalar())?;
+                offset += 1;
+
                 Ok(())
             },
         )
@@ -896,6 +952,9 @@ impl<F: Field> Circuit<F> for MPTCircuit<F> {
             power_of_randomness_from_instance(meta);
         MPTConfig::configure(meta, power_of_randomness, keccak_table)
     }
+    // [hi, lo]
+    // [hi, lo], [rlp, __ ], [], [],
+    // [hi, lo], [keyhi, key_lo]
 
     fn synthesize(
         &self,

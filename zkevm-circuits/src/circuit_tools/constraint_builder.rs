@@ -177,7 +177,7 @@ impl<F: Field> ConstraintBuilder<F> {
         meta: &mut ConstraintSystem<F>,
         lookup_names: &[S],
     ) {
-        for lookup_name in lookup_names.iter() {
+        for lookup_name in lookup_names.iter() { // "keccek", "fixed", "s_parent", ...
             let lookups = self
                 .lookups
                 .iter()
@@ -186,7 +186,9 @@ impl<F: Field> ConstraintBuilder<F> {
                 .collect::<Vec<_>>();
             for lookup in lookups.iter() {
                 meta.lookup_any(lookup.description, |_meta| {
+                    // 拿对应的表
                     let table = self.get_lookup_table_values(lookup_name);
+                    // 拿要查的值
                     let mut values: Vec<_> = lookup
                         .values
                         .iter()

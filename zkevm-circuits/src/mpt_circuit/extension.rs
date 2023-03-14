@@ -126,6 +126,9 @@ impl<F: Field> ExtensionGadget<F> {
                     }}
                 }}
             }
+            // [hi, lo]
+            // [[rlp], [keyhi keylo], [], [], []...]
+            // [[rlp], [rlp, keylo], [], [], ..]
 
             // Extension key zero check
             cb.set_length(config.rlp_key.num_bytes_on_key_row());
