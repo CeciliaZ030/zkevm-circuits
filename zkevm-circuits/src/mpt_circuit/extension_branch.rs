@@ -2,7 +2,7 @@ use eth_types::Field;
 use gadgets::util::Scalar;
 use halo2_proofs::{
     circuit::Region,
-    plonk::{Error, VirtualCells, Fixed, Column},
+    plonk::{Error, VirtualCells},
 };
 
 use super::{
@@ -36,7 +36,6 @@ impl<F: Field> ExtensionBranchConfig<F> {
         meta: &mut VirtualCells<'_, F>,
         cb: &mut MPTConstraintBuilder<F>,
         ctx: MPTContext<F>,
-        q_ext_key_odd: Column<Fixed>,
     ) -> Self {
         cb.base.cell_manager.as_mut().unwrap().reset();
         let mut config = ExtensionBranchConfig::default();
@@ -81,7 +80,6 @@ impl<F: Field> ExtensionBranchConfig<F> {
                     meta,
                     cb,
                     ctx.clone(),
-                    q_ext_key_odd,
                     &config.key_data,
                     &config.parent_data,
                     &config.is_placeholder,

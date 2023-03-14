@@ -154,7 +154,6 @@ impl<F: Field> MPTConfig<F> {
     ) -> Self {
         let q_enable = meta.fixed_column();
         let q_not_first = meta.fixed_column();
-        let q_ext_key_odd = meta.fixed_column();
 
         let mpt_table = MptTable::construct(meta);
 
@@ -212,7 +211,7 @@ impl<F: Field> MPTConfig<F> {
                             state_machine.start_config = StartConfig::configure(meta, &mut cb, ctx.clone());
                         },
                         a!(is_branch) => {
-                            state_machine.branch_config = ExtensionBranchConfig::configure(meta, &mut cb, ctx.clone(), q_ext_key_odd);
+                            state_machine.branch_config = ExtensionBranchConfig::configure(meta, &mut cb, ctx.clone());
                         },
                         a!(is_account) => {
                             state_machine.account_config = AccountLeafConfig::configure(meta, &mut cb, ctx.clone());
@@ -982,5 +981,4 @@ mod tests {
                 //prover.assert_satisfied();
             });
     }
-
 }

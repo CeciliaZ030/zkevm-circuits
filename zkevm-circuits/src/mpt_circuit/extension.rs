@@ -1,9 +1,8 @@
 use eth_types::Field;
 use gadgets::util::Scalar;
 use halo2_proofs::{
-    circuit::{Region, Value},
-    plonk::{Error, Expression, VirtualCells, Column, Fixed},
-    poly::Rotation,
+    circuit::Region,
+    plonk::{Error, Expression, VirtualCells},
 };
 
 use super::{
@@ -13,7 +12,7 @@ use super::{
     MPTContext,
 };
 use crate::{
-    circuit, assignf,
+    circuit,
     circuit_tools::{cell_manager::Cell, constraint_builder::RLCChainable, gadgets::LtGadget},
     mpt_circuit::{helpers::num_nibbles, param::HASH_WIDTH},
     mpt_circuit::{
@@ -35,12 +34,11 @@ pub(crate) struct ExtState<F> {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ExtensionGadget<F> {
-    q_ext_key_odd: Option<Column<Fixed>>,
     rlp_key: ListKeyGadget<F>,
     rlp_value: [RLPItemGadget<F>; 2],
     mult: Cell<F>,
     is_not_hashed: LtGadget<F, 2>,
-    // is_key_part_odd: Cell<F>,
+    is_key_part_odd: Cell<F>,
     mult_key: Cell<F>,
 
     // Post extension state
@@ -52,7 +50,6 @@ impl<F: Field> ExtensionGadget<F> {
         meta: &mut VirtualCells<'_, F>,
         cb: &mut MPTConstraintBuilder<F>,
         ctx: MPTContext<F>,
-        q_ext_key_odd: Column<Fixed>,
         key_data: &KeyData<F>,
         parent_data: &[ParentData<F>; 2],
         is_placeholder: &[Cell<F>; 2],
@@ -74,9 +71,7 @@ impl<F: Field> ExtensionGadget<F> {
 
             config.rlp_key = ListKeyGadget::construct(&mut cb.base, &key_bytes[0]);
             // TODO(Brecht): add lookup constraint
-            // config.is_key_part_odd = cb.base.query_cell();
-            config.q_ext_key_odd = Some(q_ext_key_odd);
-            let q_ext_key_odd = meta.query_fixed(q_ext_key_odd, Rotation::cur());
+            config.is_key_part_odd = cb.base.query_cell();
 
             // We need to check that the nibbles we stored in s are between 0 and 15.
             cb.set_range_s(FixedTableTag::RangeKeyLen16.expr());
@@ -138,14 +133,14 @@ impl<F: Field> ExtensionGadget<F> {
             // Calculate the number of bytes
             let key_len = config.rlp_key.key_value.len();
             // Calculate the number of nibbles
-            let num_nibbles = num_nibbles::expr(key_len.expr(), q_ext_key_odd.expr());
+            let num_nibbles = num_nibbles::expr(key_len.expr(), config.is_key_part_odd.expr());
             // Make sure the nibble counter is updated correctly
             let num_nibbles = key_data.num_nibbles.expr() + num_nibbles.expr();
 
             // We need to take account the nibbles of the extension node.
             // The parity alternates when there's an even number of nibbles, remains the
             // same otherwise
-            let is_key_odd = ifx! {q_ext_key_odd => {
+            let is_key_odd = ifx! {config.is_key_part_odd => {
                 not!(key_data.is_odd)
             } elsex {
                 key_data.is_odd.expr()
@@ -161,7 +156,7 @@ impl<F: Field> ExtensionGadget<F> {
                     &mut cb.base,
                     config.rlp_key.key_value.clone(),
                     key_data.mult.expr(),
-                    q_ext_key_odd.expr(),
+                    config.is_key_part_odd.expr(),
                     not!(is_key_odd),
                     key_bytes.clone(),
                     &ctx.r,
@@ -171,7 +166,7 @@ impl<F: Field> ExtensionGadget<F> {
             // Unless both parts of the key are odd, subtract 1 from the key length.
             let key_len = config.rlp_key.key_value.len();
             let key_num_bytes_for_mult = key_len
-                - ifx! {not!(key_data.is_odd.expr() * q_ext_key_odd.expr()) => { 1.expr() }};
+                - ifx! {not!(key_data.is_odd.expr() * config.is_key_part_odd.expr()) => { 1.expr() }};
             // Get the multiplier for this key length
             config.mult_key = cb.base.query_cell();
             require!((FixedTableTag::RMult, key_num_bytes_for_mult, config.mult_key.expr()) => @"fixed");
@@ -232,7 +227,8 @@ impl<F: Field> ExtensionGadget<F> {
         self.mult.assign(region, offset, ext_mult)?;
 
         let is_key_part_odd = key_bytes[0][rlp_key.key_value.num_rlp_bytes()] >> 4 == 1;
-        assignf!(region, (self.q_ext_key_odd.unwrap(), offset) => is_key_part_odd.scalar())?;
+        self.is_key_part_odd
+            .assign(region, offset, is_key_part_odd.scalar())?;
 
         self.is_not_hashed.assign(
             region,
