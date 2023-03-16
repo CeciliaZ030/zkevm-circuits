@@ -71,8 +71,15 @@ impl<F: Field> ExtensionGadget<F> {
 
             config.rlp_key = ListKeyGadget::construct(&mut cb.base, &key_bytes[0]);
             // TODO(Brecht): add lookup constraint
+            // let is_key_part_odd = key_bytes[0][rlp_key.key_value.num_rlp_bytes()] >> 4 == 1;
             config.is_key_part_odd = cb.base.query_cell();
-
+            let odd_flag = matchx! {
+                config.rlp_key.key_value.is_short() => key_bytes[0][0].expr(),
+                config.rlp_key.key_value.is_long() => key_bytes[0][1].expr(),
+                config.rlp_key.key_value.is_very_long() => key_bytes[0][2].expr(),
+            };
+            require!((FixedTableTag::ExtOddKey.expr(), odd_flag, config.is_key_part_odd.expr()) => @"fixed");
+            
             // We need to check that the nibbles we stored in s are between 0 and 15.
             cb.set_range_s(FixedTableTag::RangeKeyLen16.expr());
 
@@ -126,9 +133,6 @@ impl<F: Field> ExtensionGadget<F> {
                     }}
                 }}
             }
-            // [hi, lo]
-            // [[rlp], [keyhi keylo], [], [], []...]
-            // [[rlp], [rlp, keylo], [], [], ..]
 
             // Extension key zero check
             cb.set_length(config.rlp_key.num_bytes_on_key_row());

@@ -129,6 +129,8 @@ pub enum FixedTableTag {
     RangeKeyLen16,
     /// For checking RLP
     RLP,
+    /// For distinguishing odd key part in extension
+    ExtOddKey,
 }
 
 impl_expr!(FixedTableTag);
@@ -282,7 +284,7 @@ impl<F: Field> MPTConfig<F> {
             cb.base
                 .generate_lookups(meta, &vec!["fixed".to_string(), "keccak".to_string()]);
         } else if disable_lookups == 4 {
-            cb.base.generate_lookups(meta, &vec!["keccak".to_string()]);
+            cb.base.generate_lookups(meta, &vec!["fixed".to_string()]);
         }
 
         println!("num lookups: {}", meta.lookups().len());
@@ -926,6 +928,19 @@ impl<F: Field> MPTConfig<F> {
                 assignf!(region, (self.fixed_table[4], offset) => true.scalar())?;
                 offset += 1;
 
+                // KEY_PREFIX_ODD: u8 = 0b0001_0000;
+                // first byte of ext key >> 4 == 1
+                for ind in 0..256 {
+                    assignf!(region, (self.fixed_table[0], offset) => FixedTableTag::ExtOddKey.scalar())?;
+                    assignf!(region, (self.fixed_table[1], offset) => ind.scalar())?;
+                    if 16 <= ind && ind < 32 {
+                        assignf!(region, (self.fixed_table[2], offset) => true.scalar())?;
+                    } else {
+                        assignf!(region, (self.fixed_table[2], offset) => false.scalar())?;
+                    }
+                    offset += 1;
+                }
+                
                 Ok(())
             },
         )
@@ -952,9 +967,6 @@ impl<F: Field> Circuit<F> for MPTCircuit<F> {
             power_of_randomness_from_instance(meta);
         MPTConfig::configure(meta, power_of_randomness, keccak_table)
     }
-    // [hi, lo]
-    // [hi, lo], [rlp, __ ], [], [],
-    // [hi, lo], [keyhi, key_lo]
 
     fn synthesize(
         &self,
@@ -993,11 +1005,14 @@ mod tests {
         dev::MockProver,
         halo2curves::{bn256::Fr, FieldExt},
     };
-
-    use std::fs;
+    use std::{fs, env::VarError};
 
     #[test]
     fn test_mpt() {
+        let only_run = var("ONLY_RUN")
+            .and_then(|idx| idx.parse::<usize>().map_err(|e|VarError::NotPresent)
+        ).ok();
+        println!("{:?}", only_run);
         // for debugging:
         let path = "src/mpt_circuit/tests";
         // let path = "tests";
@@ -1013,31 +1028,37 @@ mod tests {
             })
             .enumerate()
             .for_each(|(idx, f)| {
-                let path = f.path();
-                let mut parts = path.to_str().unwrap().split('-');
-                parts.next();
-                let file = std::fs::File::open(path.clone());
-                let reader = std::io::BufReader::new(file.unwrap());
-                let w: Vec<Vec<u8>> = serde_json::from_reader(reader).unwrap();
-
-                let count = w.iter().filter(|r| r[r.len() - 1] != 5).count() * 2;
-                let randomness: Fr = 123456789.scalar();
-                let instance: Vec<Vec<Fr>> = (1..HASH_WIDTH + 1)
-                    .map(|exp| vec![randomness.pow(&[exp as u64, 0, 0, 0]); count])
-                    .collect();
-
-                let circuit = MPTCircuit::<Fr> {
-                    witness: w.clone(),
-                    randomness,
-                };
-
-                println!("{} {:?}", idx, path);
-                // let prover = MockProver::run(9, &circuit, vec![pub_root]).unwrap();
-                let num_rows = w.len() * 2;
-                let prover = MockProver::run(14 /* 9 */, &circuit, instance).unwrap();
-                assert_eq!(prover.verify_at_rows(0..num_rows, 0..num_rows,), Ok(()));
-                //assert_eq!(prover.verify_par(), Ok(()));
-                //prover.assert_satisfied();
+                let mut run = true;
+                if let Some(i) = only_run {
+                    if idx != i {run = false;} 
+                }
+                if run {
+                    let path = f.path();
+                    let mut parts = path.to_str().unwrap().split('-');
+                    parts.next();
+                    let file = std::fs::File::open(path.clone());
+                    let reader = std::io::BufReader::new(file.unwrap());
+                    let w: Vec<Vec<u8>> = serde_json::from_reader(reader).unwrap();
+    
+                    let count = w.iter().filter(|r| r[r.len() - 1] != 5).count() * 2;
+                    let randomness: Fr = 123456789.scalar();
+                    let instance: Vec<Vec<Fr>> = (1..HASH_WIDTH + 1)
+                        .map(|exp| vec![randomness.pow(&[exp as u64, 0, 0, 0]); count])
+                        .collect();
+    
+                    let circuit = MPTCircuit::<Fr> {
+                        witness: w.clone(),
+                        randomness,
+                    };
+    
+                    println!("{} {:?}", idx, path);
+                    // let prover = MockProver::run(9, &circuit, vec![pub_root]).unwrap();
+                    let num_rows = w.len() * 2;
+                    let prover = MockProver::run(14 /* 9 */, &circuit, instance).unwrap();
+                    assert_eq!(prover.verify_at_rows(0..num_rows, 0..num_rows,), Ok(()));
+                    //assert_eq!(prover.verify_par(), Ok(()));
+                    //prover.assert_satisfied();       
+                }
             });
     }
 }
