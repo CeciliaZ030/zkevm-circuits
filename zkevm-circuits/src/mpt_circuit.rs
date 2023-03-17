@@ -26,7 +26,7 @@ use columns::MainCols;
 use extension_branch::ExtensionBranchConfig;
 use witness_row::{MptWitnessRow, MptWitnessRowType};
 
-use param::HASH_WIDTH;
+use param::*;
 
 use self::{
     account_leaf::AccountLeafConfig,
@@ -245,16 +245,34 @@ impl<F: Field> MPTConfig<F> {
                     matchx! {
                         a!(is_start) => {
                             require!(a!(q_node) => 0.expr());
-
+                            require!((FixedTableTag::StartNode.expr(), a!(q_row)) => @"fixed");
                             state_machine.start_config = StartConfig::configure(meta, &mut cb, ctx.clone());
                         },
                         a!(is_branch) => {
+                            require!((FixedTableTag::BranchNode.expr(), a!(q_row)) => @"fixed");
+                            let diff = a!(q_node)- a!(q_node_prev);
+                            // Start -> Branch || Branch -> Branch
+                            require!(
+                                (diff.clone() - START_NODE_ROWS.expr()) * (diff.clone() - BRANCH_NODE_ROWS.expr()) 
+                                => 0.expr());
                             state_machine.branch_config = ExtensionBranchConfig::configure(meta, &mut cb, ctx.clone());
                         },
                         a!(is_account) => {
+                            let diff = a!(q_node)- a!(q_node_prev);
+                            // Branch -> Account
+                            require!(
+                                (diff.clone() - BRANCH_NODE_ROWS.expr()) 
+                                => 0.expr());       
+                            require!((FixedTableTag::AccountNode.expr(), a!(q_row)) => @"fixed");
                             state_machine.account_config = AccountLeafConfig::configure(meta, &mut cb, ctx.clone());
                         },
                         a!(is_storage) => {
+                            let diff = a!(q_node)- a!(q_node_prev);
+                            // Branch -> Storage
+                            require!(
+                                (diff.clone() - BRANCH_NODE_ROWS.expr())
+                                => 0.expr());
+                            require!((FixedTableTag::StorageNode.expr(), a!(q_row)) => @"fixed");
                             state_machine.storage_config = StorageLeafConfig::configure(meta, &mut cb, ctx.clone());
                         },
                         _ => (),
@@ -331,6 +349,7 @@ impl<F: Field> MPTConfig<F> {
             q_enable,
             q_not_first,
             q_node,
+            q_node_prev,
             q_row,
             is_start,
             is_branch,
@@ -779,6 +798,7 @@ impl<F: Field> MPTConfig<F> {
                 memory.clear_witness_data();
 
                 let mut offset = 0;
+                let mut offset_prev = 0;
                 for (node_id, node) in nodes.iter().enumerate() {
                     // Assign bytes
                     for (idx, bytes) in node.values.iter().enumerate() {
@@ -787,6 +807,8 @@ impl<F: Field> MPTConfig<F> {
                         }
                         assign!(region, (self.q_row, offset + idx) => idx.scalar())?;
                         assign!(region, (self.q_node, offset + idx) => offset.scalar())?;
+                        assign!(region, (self.q_node_prev, offset + idx) => offset_prev.scalar())?;
+
                     }
 
                     // Assign nodes
@@ -833,6 +855,7 @@ impl<F: Field> MPTConfig<F> {
                     }
 
                     println!("height: {}", node.values.len());
+                    offset_prev = offset;
                     offset += node.values.len();
                 }
 
