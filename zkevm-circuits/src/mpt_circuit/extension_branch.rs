@@ -2,7 +2,7 @@ use eth_types::Field;
 use gadgets::util::Scalar;
 use halo2_proofs::{
     circuit::Region,
-    plonk::{Error, VirtualCells},
+    plonk::{Error, VirtualCells}, poly::Rotation,
 };
 
 use super::{
@@ -41,6 +41,7 @@ impl<F: Field> ExtensionBranchConfig<F> {
         let mut config = ExtensionBranchConfig::default();
 
         circuit!([meta, cb.base], {
+            let q_enable = f!(ctx.q_enable);
             // General inputs
             config.is_extension = cb.base.query_bool();
             // If we're in a placeholder, both the extension and the branch parts are
@@ -252,7 +253,7 @@ impl<F: Field> ExtensionBranchConfig<F> {
                     region,
                     offset,
                     &mut pv.memory[key_memory(is_s)],
-                    key_rlc_post_branch,
+                    key_rlc_post_branch, //后面新算的
                     key_mult_post_branch,
                     num_nibbles,
                     false,
@@ -273,8 +274,8 @@ impl<F: Field> ExtensionBranchConfig<F> {
                     region,
                     offset,
                     &mut pv.memory[key_memory(is_s)],
-                    key_data.rlc,
-                    key_data.mult,
+                    key_data.rlc, 
+                    key_data.mult, //维持原样，相当于重新入栈
                     key_data.num_nibbles,
                     is_key_odd,
                     key_rlc_post_drifted,

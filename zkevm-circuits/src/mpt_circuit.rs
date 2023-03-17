@@ -72,6 +72,11 @@ pub struct StateMachineConfig<F> {
 pub struct MPTContext<F> {
     pub(crate) q_enable: Column<Fixed>,
     pub(crate) q_not_first: Column<Fixed>,
+
+    pub(crate) q_node: Column<Advice>,
+    pub(crate) q_node_prev: Column<Advice>,
+    pub(crate) q_row: Column<Advice>,
+
     pub(crate) mpt_table: MptTable,
     pub(crate) main: MainCols<F>,
     pub(crate) managed_columns: Vec<Column<Advice>>,
@@ -103,6 +108,11 @@ pub struct MPTConfig<F> {
     keccak_table: KeccakTable,
     fixed_table: [Column<Fixed>; 5],
     state_machine: StateMachineConfig<F>,
+
+    pub(crate) q_node: Column<Advice>,
+    pub(crate) q_node_prev: Column<Advice>,
+    pub(crate) q_row: Column<Advice>,
+
     pub(crate) is_start: Column<Advice>,
     pub(crate) is_branch: Column<Advice>,
     pub(crate) is_account: Column<Advice>,
@@ -131,6 +141,15 @@ pub enum FixedTableTag {
     RLP,
     /// For distinguishing odd key part in extension
     ExtOddKey,
+    /// State transition steps constriants
+    /// 2
+    StartNode,
+    /// 21
+    BranchNode,
+    /// 12
+    AccountNode,
+    /// 6
+    StorageNode
 }
 
 impl_expr!(FixedTableTag);
@@ -161,6 +180,10 @@ impl<F: Field> MPTConfig<F> {
 
         let mpt_table = MptTable::construct(meta);
 
+        let q_node = meta.advice_column();
+        let q_node_prev = meta.advice_column();
+        let q_row = meta.advice_column();
+
         let is_start = meta.advice_column();
         let is_branch = meta.advice_column();
         let is_account = meta.advice_column();
@@ -187,6 +210,11 @@ impl<F: Field> MPTConfig<F> {
         let ctx = MPTContext {
             q_enable: q_enable.clone(),
             q_not_first: q_not_first.clone(),
+
+            q_node: q_node.clone(),
+            q_node_prev: q_node_prev.clone(),
+            q_row: q_row.clone(),
+
             mpt_table: mpt_table.clone(),
             main: main.clone(),
             managed_columns: managed_columns.clone(),
@@ -209,9 +237,15 @@ impl<F: Field> MPTConfig<F> {
                     ifx! {not!(f!(q_not_first)) => {
                         require!(a!(is_start) => true);
                     }};
+                    cb.base.require_zero(
+                        "only one state is valid at a time",
+                        a!(is_start) * a!(is_branch) * a!(is_account) * a!(is_storage)
+                    );
                     // Main state machine
                     matchx! {
                         a!(is_start) => {
+                            require!(a!(q_node) => 0.expr());
+
                             state_machine.start_config = StartConfig::configure(meta, &mut cb, ctx.clone());
                         },
                         a!(is_branch) => {
@@ -264,6 +298,7 @@ impl<F: Field> MPTConfig<F> {
             .unwrap_or_else(|_| "0".to_string())
             .parse()
             .expect("Cannot parse DISABLE_LOOKUPS env var as usize");
+        println!("DISABLE_LOOKUPS={:?}", disable_lookups);
         if disable_lookups == 0 {
             cb.base.generate_lookups(
                 meta,
@@ -295,6 +330,8 @@ impl<F: Field> MPTConfig<F> {
         MPTConfig {
             q_enable,
             q_not_first,
+            q_node,
+            q_row,
             is_start,
             is_branch,
             is_account,
@@ -578,6 +615,7 @@ impl<F: Field> MPTConfig<F> {
                 }
             }
 
+            // 🌻 offset = 0 ｜ node_rows 0-2
             if new_proof {
                 let mut new_row = witness[offset].clone();
                 new_row.bytes = [
@@ -600,7 +638,7 @@ impl<F: Field> MPTConfig<F> {
                 node.values = node_rows;
                 nodes.push(node);
             }
-
+            // 🌻 offset = 0 ｜ node_rows 0-21
             if witness[offset].get_type() == MptWitnessRowType::InitBranch {
                 let row_init = witness[offset].to_owned();
                 let is_placeholder = row_init.is_placeholder.clone();
@@ -647,7 +685,9 @@ impl<F: Field> MPTConfig<F> {
                 node.extension_branch = Some(extension_branch_node);
                 node.values = node_rows;
                 nodes.push(node);
-            } else if witness[offset].get_type() == MptWitnessRowType::StorageLeafSKey {
+            } 
+            // 🌻 offset = 19 ｜ node_rows 22-21
+            else if witness[offset].get_type() == MptWitnessRowType::StorageLeafSKey {
                 let row_key = [&witness[offset + 0], &witness[offset + 2]];
                 let row_value = [&witness[offset + 1], &witness[offset + 3]];
                 let row_drifted = &witness[offset + 4];
@@ -739,17 +779,19 @@ impl<F: Field> MPTConfig<F> {
                 memory.clear_witness_data();
 
                 let mut offset = 0;
-                for node in nodes.iter() {
+                for (node_id, node) in nodes.iter().enumerate() {
                     // Assign bytes
                     for (idx, bytes) in node.values.iter().enumerate() {
                         for (byte, &column) in bytes.iter().zip(self.main.bytes.iter()) {
                             assign!(region, (column, offset + idx) => byte.scalar())?;
                         }
+                        assign!(region, (self.q_row, offset + idx) => idx.scalar())?;
+                        assign!(region, (self.q_node, offset + idx) => offset.scalar())?;
                     }
 
                     // Assign nodes
                     if node.start.is_some() {
-                        //println!("{}: start", offset);
+                        println!("{}: start", offset);
                         assign!(region, (self.is_start, offset) => 1.scalar())?;
                         self.state_machine.start_config.assign(
                             &mut region,
@@ -759,7 +801,7 @@ impl<F: Field> MPTConfig<F> {
                             node,
                         )?;
                     } else if node.extension_branch.is_some() {
-                        //println!("{}: branch", offset);
+                        println!("{}: branch", offset);
                         assign!(region, (self.is_branch, offset) => 1.scalar())?;
                         self.state_machine.branch_config.assign(
                             &mut region,
@@ -770,7 +812,7 @@ impl<F: Field> MPTConfig<F> {
                         )?;
                     } else if node.storage.is_some() {
                         assign!(region, (self.is_storage, offset) => 1.scalar())?;
-                        //println!("{}: storage", offset);
+                        println!("{}: storage", offset);
                         self.state_machine.storage_config.assign(
                             &mut region,
                             self,
@@ -780,7 +822,7 @@ impl<F: Field> MPTConfig<F> {
                         )?;
                     } else if node.account.is_some() {
                         assign!(region, (self.is_account, offset) => 1.scalar())?;
-                        //println!("{}: account", offset);
+                        println!("{}: account", offset);
                         self.state_machine.account_config.assign(
                             &mut region,
                             self,
@@ -790,7 +832,7 @@ impl<F: Field> MPTConfig<F> {
                         )?;
                     }
 
-                    //println!("height: {}", node.bytes.len());
+                    println!("height: {}", node.values.len());
                     offset += node.values.len();
                 }
 
@@ -798,8 +840,8 @@ impl<F: Field> MPTConfig<F> {
                 memory = pv.memory;
 
                 for offset in 0..height {
-                    assignf!(region, (self.q_enable, offset) => true.scalar())?;
-                    assignf!(region, (self.q_not_first, offset) => (offset != 0).scalar())?;
+                    // assignf!(region, (self.q_enable, offset) => true.scalar())?;
+                    assignf!(region, (self.q_not_first, offset) => (offset == 0).scalar())?;
                 }
 
                 Ok(())
@@ -940,6 +982,23 @@ impl<F: Field> MPTConfig<F> {
                     }
                     offset += 1;
                 }
+
+                for ind in 0..2 {
+                    assignf!(region, (self.fixed_table[0], offset) => FixedTableTag::StartNode.scalar())?;
+                    assignf!(region, (self.fixed_table[1], offset) => ind.scalar())?;
+                }
+                for ind in 0..21 {
+                    assignf!(region, (self.fixed_table[0], offset) => FixedTableTag::BranchNode.scalar())?;
+                    assignf!(region, (self.fixed_table[1], offset) => ind.scalar())?;
+                }
+                for ind in 0..12 {
+                    assignf!(region, (self.fixed_table[0], offset) => FixedTableTag::AccountNode.scalar())?;
+                    assignf!(region, (self.fixed_table[1], offset) => ind.scalar())?;
+                }
+                for ind in 0..6 {
+                    assignf!(region, (self.fixed_table[0], offset) => FixedTableTag::StorageNode.scalar())?;
+                    assignf!(region, (self.fixed_table[1], offset) => ind.scalar())?;
+                }
                 
                 Ok(())
             },
@@ -1012,7 +1071,7 @@ mod tests {
         let only_run = var("ONLY_RUN")
             .and_then(|idx| idx.parse::<usize>().map_err(|e|VarError::NotPresent)
         ).ok();
-        println!("{:?}", only_run);
+        println!("ONLY_RUN={:?}", only_run);
         // for debugging:
         let path = "src/mpt_circuit/tests";
         // let path = "tests";
