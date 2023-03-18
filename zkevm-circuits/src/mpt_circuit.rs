@@ -992,16 +992,16 @@ impl<F: Field> MPTConfig<F> {
                 assignf!(region, (self.fixed_table[4], offset) => true.scalar())?;
                 offset += 1;
 
-                // KEY_PREFIX_ODD: u8 = 0b0001_0000;
-                // first byte of ext key >> 4 == 1
-                for ind in 0..256 {
+                // Even - only the nibbles 0 0 are valid
+                assignf!(region, (self.fixed_table[0], offset) => FixedTableTag::ExtOddKey.scalar())?;
+                assignf!(region, (self.fixed_table[1], offset) => 0.scalar())?;
+                assignf!(region, (self.fixed_table[2], offset) => false.scalar())?;
+                offset += 1;
+                // Odd - First nibble is 1, the second nibble can be any value
+                for idx in 0..16 {
                     assignf!(region, (self.fixed_table[0], offset) => FixedTableTag::ExtOddKey.scalar())?;
-                    assignf!(region, (self.fixed_table[1], offset) => ind.scalar())?;
-                    if 16 <= ind && ind < 32 {
-                        assignf!(region, (self.fixed_table[2], offset) => true.scalar())?;
-                    } else {
-                        assignf!(region, (self.fixed_table[2], offset) => false.scalar())?;
-                    }
+                    assignf!(region, (self.fixed_table[1], offset) => ((0b1_0000) + idx).scalar())?;
+                    assignf!(region, (self.fixed_table[2], offset) => true.scalar())?;
                     offset += 1;
                 }
                 
