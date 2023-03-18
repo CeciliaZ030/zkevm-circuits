@@ -143,11 +143,6 @@ pub const RLP_HASH_VALUE: u8 = 128 + 32; //  0x80
 pub const KEY_LEN: usize = 32;
 pub const KEY_LEN_IN_NIBBLES: usize = KEY_LEN * 2;
 
-// MPT row constraints
-pub const START_NODE_ROWS: usize = 2;
-pub const BRANCH_NODE_ROWS: usize = 21;
-pub const ACCOUNT_NODE_ROWS: usize = 12;
-pub const LEAF_NODE_ROWS: usize = 6;
 
 // Empty trie
 pub const EMPTY_TRIE_HASH: [u8; 32] = [

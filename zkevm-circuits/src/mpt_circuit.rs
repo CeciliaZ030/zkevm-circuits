@@ -226,6 +226,7 @@ impl<F: Field> MPTConfig<F> {
 
         let mut cb = MPTConstraintBuilder::new(33 + 10, None);
         meta.create_gate("MPT", |meta| {
+            // 20 cols * 32 height in CellManager
             let cell_manager = CellManager::new(meta, &ctx.managed_columns);
             cb.base.set_cell_manager(cell_manager);
 
@@ -237,45 +238,43 @@ impl<F: Field> MPTConfig<F> {
                     ifx! {not!(f!(q_not_first)) => {
                         require!(a!(is_start) => true);
                     }};
-                    cb.base.require_zero(
-                        "only one state is valid at a time",
-                        a!(is_start) * a!(is_branch) * a!(is_account) * a!(is_storage)
-                    );
+                    // When q_row > 0, we're in the middle of some node rows, all flags needs to be 0 
+                    // Otherwise q_row == 0, we start at a new node and corresponding flag needs to be 1
+                    // taken care by  _ => require!(true => false)
+                    ifx! {a!(q_row)  => {
+                        require! ((a!(is_start) + a!(is_branch) + a!(is_account) + a!(is_storage)) => 0.expr());
+                    }} 
                     // Main state machine
                     matchx! {
                         a!(is_start) => {
-                            require!(a!(q_node) => 0.expr());
-                            require!((FixedTableTag::StartNode.expr(), a!(q_row)) => @"fixed");
+                            require!(a!(q_row) + a!(q_node) => 0.expr());                            
                             state_machine.start_config = StartConfig::configure(meta, &mut cb, ctx.clone());
                         },
                         a!(is_branch) => {
-                            require!((FixedTableTag::BranchNode.expr(), a!(q_row)) => @"fixed");
-                            let diff = a!(q_node)- a!(q_node_prev);
+                            // q_node[cur] - count == q_node[cur-count]
                             // Start -> Branch || Branch -> Branch
-                            require!(
-                                (diff.clone() - START_NODE_ROWS.expr()) * (diff.clone() - BRANCH_NODE_ROWS.expr()) 
-                                => 0.expr());
+                            let diff1 = a!(q_node) - (ExtensionBranchRowType::Count as i32).expr() - a!(q_node, -(ExtensionBranchRowType::Count as i32));
+                            let diff2 = a!(q_node) - (StartRowType::Count as i32).expr() - a!(q_node, -(StartRowType::Count as i32));
+                            require!(a!(q_row) + diff1 * diff2 => 0.expr());
+
                             state_machine.branch_config = ExtensionBranchConfig::configure(meta, &mut cb, ctx.clone());
                         },
                         a!(is_account) => {
-                            let diff = a!(q_node)- a!(q_node_prev);
                             // Branch -> Account
-                            require!(
-                                (diff.clone() - BRANCH_NODE_ROWS.expr()) 
-                                => 0.expr());       
-                            require!((FixedTableTag::AccountNode.expr(), a!(q_row)) => @"fixed");
+                            let diff1 = a!(q_node) - (AccountRowType::Count as i32).expr() - a!(q_node, -(AccountRowType::Count as i32));
+                            require!(a!(q_row) + diff1 => 0.expr());
+                            
                             state_machine.account_config = AccountLeafConfig::configure(meta, &mut cb, ctx.clone());
                         },
-                        a!(is_storage) => {
-                            let diff = a!(q_node)- a!(q_node_prev);
+                        a!(is_storage)  => {
                             // Branch -> Storage
-                            require!(
-                                (diff.clone() - BRANCH_NODE_ROWS.expr())
-                                => 0.expr());
-                            require!((FixedTableTag::StorageNode.expr(), a!(q_row)) => @"fixed");
+                            let diff1 = a!(q_node) - (StartRowType::Count as i32).expr() - a!(q_node, -(StartRowType::Count as i32));
+                            require!(a!(q_node) + diff1 => 0.expr());
+                            
                             state_machine.storage_config = StorageLeafConfig::configure(meta, &mut cb, ctx.clone());
                         },
-                        _ => (),
+
+                        _ => require!(true => false),
                     };
                     // Only account and storage rows can have lookups, disable lookups on all other rows
                     matchx! {
@@ -1004,23 +1003,6 @@ impl<F: Field> MPTConfig<F> {
                         assignf!(region, (self.fixed_table[2], offset) => false.scalar())?;
                     }
                     offset += 1;
-                }
-
-                for ind in 0..2 {
-                    assignf!(region, (self.fixed_table[0], offset) => FixedTableTag::StartNode.scalar())?;
-                    assignf!(region, (self.fixed_table[1], offset) => ind.scalar())?;
-                }
-                for ind in 0..21 {
-                    assignf!(region, (self.fixed_table[0], offset) => FixedTableTag::BranchNode.scalar())?;
-                    assignf!(region, (self.fixed_table[1], offset) => ind.scalar())?;
-                }
-                for ind in 0..12 {
-                    assignf!(region, (self.fixed_table[0], offset) => FixedTableTag::AccountNode.scalar())?;
-                    assignf!(region, (self.fixed_table[1], offset) => ind.scalar())?;
-                }
-                for ind in 0..6 {
-                    assignf!(region, (self.fixed_table[0], offset) => FixedTableTag::StorageNode.scalar())?;
-                    assignf!(region, (self.fixed_table[1], offset) => ind.scalar())?;
                 }
                 
                 Ok(())
