@@ -335,6 +335,7 @@ impl<F: Field> ExecutionConfig<F> {
             let num_rows_left_next = meta.query_advice(num_rows_until_next_step, Rotation::next());
             let num_rows_left_inverse = meta.query_advice(num_rows_inv, Rotation::cur());
 
+
             let mut cb = BaseConstraintBuilder::default();
             // q_step needs to be enabled on the first row
             cb.condition(q_step_first, |cb| {
