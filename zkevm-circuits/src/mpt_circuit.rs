@@ -1,6 +1,6 @@
 //! The MPT circuit implementation.
 use eth_types::Field;
-use gadgets::{impl_expr, util::Scalar};
+use gadgets::{impl_expr, util::Scalar, is_zero::IsZeroConfig};
 use halo2_proofs::{
     circuit::{Layouter, SimpleFloorPlanner, Value},
     plonk::{Advice, Circuit, Column, ConstraintSystem, Error, Expression, Fixed, VirtualCells},
@@ -44,8 +44,9 @@ use self::{
         ExtensionNode, Node, StartNode, StartRowType, StorageNode, StorageRowType,
     },
 };
-use crate::mpt_circuit::helpers::Indexable;
+use crate::{mpt_circuit::helpers::Indexable};
 use crate::{
+    evm_circuit::util::math_gadget::IsZeroGadget,
     assign, assignf, circuit,
     circuit_tools::{cell_manager::CellManager, constraint_builder::merge_lookups, memory::Memory},
     matchr, matchw,
@@ -74,8 +75,8 @@ pub struct MPTContext<F> {
     pub(crate) q_not_first: Column<Fixed>,
 
     pub(crate) q_node: Column<Advice>,
-    pub(crate) q_node_prev: Column<Advice>,
     pub(crate) q_row: Column<Advice>,
+    pub(crate) q_row_inv: Column<Advice>,
 
     pub(crate) mpt_table: MptTable,
     pub(crate) main: MainCols<F>,
@@ -102,16 +103,18 @@ impl<F: Field> MPTContext<F> {
 pub struct MPTConfig<F> {
     pub(crate) q_enable: Column<Fixed>,
     pub(crate) q_not_first: Column<Fixed>,
+
     pub(crate) main: MainCols<F>,
     pub(crate) managed_columns: Vec<Column<Advice>>,
     pub(crate) memory: Memory<F>,
+
     keccak_table: KeccakTable,
     fixed_table: [Column<Fixed>; 5],
     state_machine: StateMachineConfig<F>,
 
     pub(crate) q_node: Column<Advice>,
-    pub(crate) q_node_prev: Column<Advice>,
     pub(crate) q_row: Column<Advice>,
+    pub(crate) q_row_inv: Column<Advice>,
 
     pub(crate) is_start: Column<Advice>,
     pub(crate) is_branch: Column<Advice>,
@@ -181,8 +184,8 @@ impl<F: Field> MPTConfig<F> {
         let mpt_table = MptTable::construct(meta);
 
         let q_node = meta.advice_column();
-        let q_node_prev = meta.advice_column();
         let q_row = meta.advice_column();
+        let q_row_inv = meta.advice_column();
 
         let is_start = meta.advice_column();
         let is_branch = meta.advice_column();
@@ -207,13 +210,15 @@ impl<F: Field> MPTConfig<F> {
         memory.allocate(meta, parent_memory(true));
         memory.allocate(meta, main_memory());
 
+        let mut cb = MPTConstraintBuilder::new(33 + 10, None);
+
         let ctx = MPTContext {
             q_enable: q_enable.clone(),
             q_not_first: q_not_first.clone(),
 
             q_node: q_node.clone(),
-            q_node_prev: q_node_prev.clone(),
             q_row: q_row.clone(),
+            q_row_inv: q_row_inv.clone(),
 
             mpt_table: mpt_table.clone(),
             main: main.clone(),
@@ -224,13 +229,16 @@ impl<F: Field> MPTConfig<F> {
 
         let mut state_machine = StateMachineConfig::default();
 
-        let mut cb = MPTConstraintBuilder::new(33 + 10, None);
         meta.create_gate("MPT", |meta| {
             // 20 cols * 32 height in CellManager
             let cell_manager = CellManager::new(meta, &ctx.managed_columns);
             cb.base.set_cell_manager(cell_manager);
 
             circuit!([meta, cb.base], {
+                let is_q_row_zero = IsZeroConfig {
+                    value_inv: ctx.q_row_inv.clone(),
+                    is_zero_expression: 1.expr() - a!(q_row) * a!(q_row_inv),
+                };
                 // State machine
                 // TODO(Brecht): state machine constraints
                 ifx!{f!(q_enable) => {
@@ -238,44 +246,53 @@ impl<F: Field> MPTConfig<F> {
                     ifx! {not!(f!(q_not_first)) => {
                         require!(a!(is_start) => true);
                     }};
-                    // When q_row > 0, we're in the middle of some node rows, all flags needs to be 0 
-                    // Otherwise q_row == 0, we start at a new node and corresponding flag needs to be 1
-                    // taken care by  _ => require!(true => false)
-                    ifx! {a!(q_row)  => {
+                    // When q_row == 0, we start at a new node,
+                    // one of [is_start, is_branch, is_account, is_storage] needs to be 1,
+                    // if not we goes to  _ => require!(true => false)
+                    // Otherwise q_row > 0, we're in the middle of some node rows, all flags needs to be 0;
+                    ifx! {is_q_row_zero.expr() => {
+                        matchx! {
+                            a!(is_start) => {
+                                require!(a!(q_row) + a!(q_node) => 0.expr());                      
+                                state_machine.start_config = StartConfig::configure(meta, &mut cb, ctx.clone());
+                            },
+                            a!(is_branch) => {
+                                /* 
+                                // q_node[cur] - count == q_node[cur-count]
+                                // Start -> Branch || Branch -> Branch
+                                let diff1 = a!(q_node) - (ExtensionBranchRowType::Count as i32).expr() - a!(q_node, -(ExtensionBranchRowType::Count as i32));
+                                let diff2 = a!(q_node) - (StartRowType::Count as i32).expr() - a!(q_node, -(StartRowType::Count as i32));
+                                require!(a!(q_row) + diff1 * diff2 => 0.expr());
+                                */
+                                state_machine.branch_config = ExtensionBranchConfig::configure(meta, &mut cb, ctx.clone());
+                            },
+                            a!(is_account) => {
+                                /*
+                                // Branch -> Account
+                                let diff1 = a!(q_node) - (AccountRowType::Count as i32).expr() - a!(q_node, -(AccountRowType::Count as i32));
+                                require!(a!(q_row) + diff1 => 0.expr());
+                                 */
+                                state_machine.account_config = AccountLeafConfig::configure(meta, &mut cb, ctx.clone());
+                            },
+                            a!(is_storage)  => {
+                               /* // Branch -> Storage
+                                let diff1 = a!(q_node) - (StartRowType::Count as i32).expr() - a!(q_node, -(StartRowType::Count as i32));
+                                require!(a!(q_node) + diff1 => 0.expr());
+                                */
+                                state_machine.storage_config = StorageLeafConfig::configure(meta, &mut cb, ctx.clone());
+                            },
+                            _ => require!(true => false),
+                        };
+                    } elsex {
                         require! ((a!(is_start) + a!(is_branch) + a!(is_account) + a!(is_storage)) => 0.expr());
-                    }} 
+                    }};
+                    // Lookahead
+                    // when q_row.next() != 0 then q_row.next == q_row + 1
+                    ifx! {a!(q_row, 1i32) => {
+                        require!(a!(q_row) + 1.expr() => a!(q_row, 1i32))
+                    }};
+                   
                     // Main state machine
-                    matchx! {
-                        a!(is_start) => {
-                            require!(a!(q_row) + a!(q_node) => 0.expr());                            
-                            state_machine.start_config = StartConfig::configure(meta, &mut cb, ctx.clone());
-                        },
-                        a!(is_branch) => {
-                            // q_node[cur] - count == q_node[cur-count]
-                            // Start -> Branch || Branch -> Branch
-                            let diff1 = a!(q_node) - (ExtensionBranchRowType::Count as i32).expr() - a!(q_node, -(ExtensionBranchRowType::Count as i32));
-                            let diff2 = a!(q_node) - (StartRowType::Count as i32).expr() - a!(q_node, -(StartRowType::Count as i32));
-                            require!(a!(q_row) + diff1 * diff2 => 0.expr());
-
-                            state_machine.branch_config = ExtensionBranchConfig::configure(meta, &mut cb, ctx.clone());
-                        },
-                        a!(is_account) => {
-                            // Branch -> Account
-                            let diff1 = a!(q_node) - (AccountRowType::Count as i32).expr() - a!(q_node, -(AccountRowType::Count as i32));
-                            require!(a!(q_row) + diff1 => 0.expr());
-                            
-                            state_machine.account_config = AccountLeafConfig::configure(meta, &mut cb, ctx.clone());
-                        },
-                        a!(is_storage)  => {
-                            // Branch -> Storage
-                            let diff1 = a!(q_node) - (StartRowType::Count as i32).expr() - a!(q_node, -(StartRowType::Count as i32));
-                            require!(a!(q_node) + diff1 => 0.expr());
-                            
-                            state_machine.storage_config = StorageLeafConfig::configure(meta, &mut cb, ctx.clone());
-                        },
-
-                        _ => require!(true => false),
-                    };
                     // Only account and storage rows can have lookups, disable lookups on all other rows
                     matchx! {
                         a!(is_account) => (),
@@ -348,8 +365,8 @@ impl<F: Field> MPTConfig<F> {
             q_enable,
             q_not_first,
             q_node,
-            q_node_prev,
             q_row,
+            q_row_inv,
             is_start,
             is_branch,
             is_account,
@@ -804,10 +821,10 @@ impl<F: Field> MPTConfig<F> {
                         for (byte, &column) in bytes.iter().zip(self.main.bytes.iter()) {
                             assign!(region, (column, offset + idx) => byte.scalar())?;
                         }
-                        assign!(region, (self.q_row, offset + idx) => idx.scalar())?;
+                        let idx_scalar: F = idx.scalar();
                         assign!(region, (self.q_node, offset + idx) => offset.scalar())?;
-                        assign!(region, (self.q_node_prev, offset + idx) => offset_prev.scalar())?;
-
+                        assign!(region, (self.q_row, offset + idx) => idx_scalar)?;
+                        assign!(region, (self.q_row_inv, offset + idx) => idx_scalar.invert().unwrap_or(F::zero()))?;
                     }
 
                     // Assign nodes
