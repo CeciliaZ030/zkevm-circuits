@@ -1,5 +1,5 @@
 //! Cell manager
-use crate::util::Expr;
+use crate::{util::Expr, evm_circuit::param::N_BYTES_ACCOUNT_ADDRESS};
 use eth_types::Field;
 use halo2_proofs::{
     circuit::{AssignedCell, Region, Value},
@@ -135,8 +135,10 @@ impl<F: Field> Expr<F> for &Cell<F> {
 /// CellType
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CellType {
-    /// General
+    /// Storage type
     Storage,
+    /// Lookup Byte
+    LookupByte,
 }
 
 /// CellColumn
@@ -181,6 +183,11 @@ impl<F: Field> CellManager<F> {
                 expr: cells[c * height].expr(),
             });
         }
+        let LookupByte_count = 4;
+        for i in 0usize..LookupByte_count {
+            columns[i].cell_type = CellType::LookupByte;
+        }
+
 
         Self {
             width,
@@ -204,6 +211,7 @@ impl<F: Field> CellManager<F> {
     pub(crate) fn query_cell(&mut self, cell_type: CellType) -> Cell<F> {
         self.query_cells(cell_type, 1)[0].clone()
     }
+
 
     pub(crate) fn reset(&mut self) {
         for column in self.columns.iter_mut() {

@@ -72,7 +72,7 @@ impl<F: Field> ExtensionGadget<F> {
             config.rlp_key = ListKeyGadget::construct(&mut cb.base, &key_bytes[0]);
             // TODO(Brecht): add lookup constraint
             // let is_key_part_odd = key_bytes[0][rlp_key.key_value.num_rlp_bytes()] >> 4 == 1;
-            config.is_key_part_odd = cb.base.query_cell();
+            config.is_key_part_odd = cb.base.query_byte();
             let odd_flag = matchx! {
                 config.rlp_key.key_value.is_short() => key_bytes[0][0].expr(),
                 config.rlp_key.key_value.is_long() => key_bytes[0][1].expr(),

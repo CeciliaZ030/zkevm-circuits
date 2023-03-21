@@ -6,6 +6,7 @@ use halo2_proofs::plonk::{ConstraintSystem, Expression};
 use itertools::Itertools;
 
 use super::cell_manager::{Cell, CellManager, CellType, DataTransition, Trackable};
+use crate::mpt_circuit::FixedTableTag;
 
 /// Lookup data
 #[derive(Clone)]
@@ -129,8 +130,7 @@ impl<F: Field> ConstraintBuilder<F> {
     }
 
     pub(crate) fn query_byte(&mut self) -> Cell<F> {
-        // TODO(Brecht): fix
-        self.query_cell_with_type(CellType::Storage)
+        self.query_cell_with_type(CellType::LookupByte)
     }
 
     pub(crate) fn query_bytes<const N: usize>(&mut self) -> [Cell<F>; N] {
@@ -138,7 +138,7 @@ impl<F: Field> ConstraintBuilder<F> {
     }
 
     pub(crate) fn query_bytes_dyn(&mut self, count: usize) -> Vec<Cell<F>> {
-        self.query_cells(CellType::Storage, count)
+        self.query_cells(CellType::LookupByte, count)
     }
 
     pub(crate) fn query_cell(&mut self) -> Cell<F> {
@@ -173,17 +173,30 @@ impl<F: Field> ConstraintBuilder<F> {
     }
 
     pub(crate) fn generate_lookups<S: AsRef<str>>(
-        &self,
+        &mut self,
         meta: &mut ConstraintSystem<F>,
-        lookup_names: &[S],
+        lookup_names: &[S], 
+        // "keccek", "fixed", "parent_s" ,"parent_c","parent_s", "key_s", "key_c"
     ) {
-        for lookup_name in lookup_names.iter() { // "keccek", "fixed", "s_parent", ...
+        if let Some(cm) = self.cell_manager.clone() {
+            for column in cm.columns() {
+                if column.cell_type == CellType::LookupByte {
+                    self.lookup(
+                        "Lookup byte", 
+                        "fixed", 
+                        vec![FixedTableTag::Range256.expr(), column.expr()]
+                    );
+                }
+        }
+        }
+        for lookup_name in lookup_names.iter() { 
             let lookups = self
                 .lookups
                 .iter()
                 .cloned()
                 .filter(|lookup| lookup.tag == lookup_name.as_ref())
                 .collect::<Vec<_>>();
+            // [ "parent_s" ,"parent_c","parent_s", "key_s", "key_c"]
             for lookup in lookups.iter() {
                 meta.lookup_any(lookup.description, |_meta| {
                     // 拿对应的表
