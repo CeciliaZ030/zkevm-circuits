@@ -17,6 +17,7 @@ use crate::{
         rlp_gadgets::{get_ext_odd_nibble, get_terminal_odd_nibble},
     },
     util::Expr,
+    evm_circuit::util::CachedRegion,
 };
 use eth_types::Field;
 use gadgets::util::{or, Scalar};
@@ -442,6 +443,31 @@ impl<F: Field> KeyData<F> {
 
         Ok(())
     }
+    
+    pub(crate) fn witness_store_cached(
+        _region: &mut CachedRegion<F>,
+        offset: usize,
+        memory: &mut MemoryBank<F>,
+        rlc: F,
+        mult: F,
+        num_nibbles: usize,
+        placeholder_is_odd: bool,
+        parent_rlc: F,
+        parent_mult: F,
+    ) -> Result<(), Error> {
+        let values = [
+            rlc,
+            mult,
+            num_nibbles.scalar(),
+            (num_nibbles % 2 == 1).scalar(),
+            placeholder_is_odd.scalar(),
+            parent_rlc,
+            parent_mult,
+        ];
+        memory.witness_store(offset, &values);
+
+        Ok(())
+    }
 
     pub(crate) fn witness_load(
         &self,
@@ -545,6 +571,26 @@ impl<F: Field> ParentData<F> {
         Ok(())
     }
 
+    pub(crate) fn witness_store_cached(
+        _region: &mut CachedRegion<F>,
+        offset: usize,
+        memory: &mut MemoryBank<F>,
+        rlc: F,
+        force_hashed: bool,
+        is_placeholder: bool,
+        placeholder_rlc: F,
+    ) -> Result<(), Error> {
+        let values = [
+            rlc,
+            force_hashed.scalar(),
+            is_placeholder.scalar(),
+            placeholder_rlc,
+        ];
+        memory.witness_store(offset, &values);
+
+        Ok(())
+    }
+
     pub(crate) fn witness_load(
         &self,
         region: &mut Region<'_, F>,
@@ -627,6 +673,28 @@ impl<F: Field> MainData<F> {
 
     pub(crate) fn witness_store(
         _region: &mut Region<'_, F>,
+        offset: usize,
+        memory: &mut MemoryBank<F>,
+        proof_type: usize,
+        is_below_account: bool,
+        address_rlc: F,
+        root_prev: F,
+        root: F,
+    ) -> Result<(), Error> {
+        let values = [
+            proof_type.scalar(),
+            is_below_account.scalar(),
+            address_rlc,
+            root_prev,
+            root,
+        ];
+        memory.witness_store(offset, &values);
+
+        Ok(())
+    }
+
+    pub(crate) fn witness_store_cached(
+        _region:  &mut CachedRegion<F>,
         offset: usize,
         memory: &mut MemoryBank<F>,
         proof_type: usize,

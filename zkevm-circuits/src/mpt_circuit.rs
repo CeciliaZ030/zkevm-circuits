@@ -44,7 +44,7 @@ use self::{
         ExtensionNode, Node, StartNode, StartRowType, StorageNode, StorageRowType,
     },
 };
-use crate::{mpt_circuit::helpers::Indexable};
+use crate::{mpt_circuit::helpers::Indexable, evm_circuit::util::CachedRegion};
 use crate::{
     assign, assignf, circuit,
     circuit_tools::{cell_manager::CellManager, gadgets::IsZeroGadget, constraint_builder::merge_lookups, memory::Memory},
@@ -72,8 +72,6 @@ pub struct StateMachineConfig<F> {
 pub struct MPTContext<F> {
     pub(crate) q_enable: Column<Fixed>,
     pub(crate) q_not_first: Column<Fixed>,
-
-    pub(crate) q_node: Column<Advice>,
     pub(crate) q_row: Column<Advice>,
 
     pub(crate) mpt_table: MptTable,
@@ -94,6 +92,7 @@ impl<F: Field> MPTContext<F> {
             .map(|&byte| meta.query_advice(byte, Rotation(rot)))
             .collect::<Vec<_>>()
     }
+
 }
 
 /// Merkle Patricia Trie config.
@@ -183,8 +182,7 @@ impl<F: Field> MPTConfig<F> {
 
         let q_node = meta.advice_column();
         let q_row = meta.advice_column();
-        let q_row_inv = meta.advice_column();
-
+   
         let is_start = meta.advice_column();
         let is_branch = meta.advice_column();
         let is_account = meta.advice_column();
@@ -214,8 +212,6 @@ impl<F: Field> MPTConfig<F> {
         let ctx = MPTContext {
             q_enable: q_enable.clone(),
             q_not_first: q_not_first.clone(),
-
-            q_node: q_node.clone(),
             q_row: q_row.clone(),
 
             mpt_table: mpt_table.clone(),
@@ -226,6 +222,8 @@ impl<F: Field> MPTConfig<F> {
         };
 
         let mut state_machine = StateMachineConfig::default();
+
+        println!("total advices {}", meta.num_advice_columns());
 
         meta.create_gate("MPT", |meta| {
             // 20 cols * 32 height in CellManager
@@ -247,47 +245,34 @@ impl<F: Field> MPTConfig<F> {
                     // one of [is_start, is_branch, is_account, is_storage] needs to be 1,
                     // if not we goes to  _ => require!(true => false)
                     // Otherwise q_row > 0, we're in the middle of some node rows, all flags needs to be 0;
-                    ifx! {is_q_row_zero.expr() => {
-                        matchx! {
-                            a!(is_start) => {
-                                require!(a!(q_row) + a!(q_node) => 0.expr());                      
-                                state_machine.start_config = StartConfig::configure(meta, &mut cb, ctx.clone());
-                            },
-                            a!(is_branch) => {
-                                /* 
-                                // q_node[cur] - count == q_node[cur-count]
-                                // Start -> Branch || Branch -> Branch
-                                let diff1 = a!(q_node) - (ExtensionBranchRowType::Count as i32).expr() - a!(q_node, -(ExtensionBranchRowType::Count as i32));
-                                let diff2 = a!(q_node) - (StartRowType::Count as i32).expr() - a!(q_node, -(StartRowType::Count as i32));
-                                require!(a!(q_row) + diff1 * diff2 => 0.expr());
-                                */
-                                state_machine.branch_config = ExtensionBranchConfig::configure(meta, &mut cb, ctx.clone());
-                            },
-                            a!(is_account) => {
-                                /*
-                                // Branch -> Account
-                                let diff1 = a!(q_node) - (AccountRowType::Count as i32).expr() - a!(q_node, -(AccountRowType::Count as i32));
-                                require!(a!(q_row) + diff1 => 0.expr());
-                                 */
-                                state_machine.account_config = AccountLeafConfig::configure(meta, &mut cb, ctx.clone());
-                            },
-                            a!(is_storage)  => {
-                               /* // Branch -> Storage
-                                let diff1 = a!(q_node) - (StartRowType::Count as i32).expr() - a!(q_node, -(StartRowType::Count as i32));
-                                require!(a!(q_node) + diff1 => 0.expr());
-                                */
-                                state_machine.storage_config = StorageLeafConfig::configure(meta, &mut cb, ctx.clone());
-                            },
-                            _ => require!(true => false),
-                        };
-                    } elsex {
-                        require! ((a!(is_start) + a!(is_branch) + a!(is_account) + a!(is_storage)) => 0.expr());
-                    }};
+                    // ifx! {is_q_row_zero.expr() => {
+
+                    // } elsex {
+                    //     require! ((a!(is_start) + a!(is_branch) + a!(is_account) + a!(is_storage)) => 0.expr());
+                    // }};
+
+                    matchx! {
+                        a!(is_start) => {
+                            // require!(a!(q_row) + a!(q_node) => 0.expr());                      
+                            state_machine.start_config = StartConfig::configure(meta, &mut cb, ctx.clone());
+                        },
+                        a!(is_branch) => {
+                            state_machine.branch_config = ExtensionBranchConfig::configure(meta, &mut cb, ctx.clone());
+                        },
+                        a!(is_account) => {
+                            state_machine.account_config = AccountLeafConfig::configure(meta, &mut cb, ctx.clone());
+                        },
+                        a!(is_storage)  => {
+                            state_machine.storage_config = StorageLeafConfig::configure(meta, &mut cb, ctx.clone());
+                        },
+                        _ => require!(true => false),
+                    };
+
                     // Lookahead
                     // when q_row.next() != 0 then q_row.next == q_row + 1
-                    ifx! {a!(q_row, 1i32) => {
-                        require!(a!(q_row) + 1.expr() => a!(q_row, 1i32))
-                    }};
+                    // ifx! {a!(q_row, 1i32) => {
+                    //     require!(a!(q_row) + 1.expr() => a!(q_row, 1i32))
+                    // }};
                    
                     // Main state machine
                     // Only account and storage rows can have lookups, disable lookups on all other rows
@@ -809,11 +794,11 @@ impl<F: Field> MPTConfig<F> {
             || "MPT",
             |mut region| {
                 let mut pv = MPTState::new(&self.memory);
-
                 memory.clear_witness_data();
 
+                let power_of_randomness: [F; 31] = array_init::array_init(|i | self.r.pow(&[i as u64, 0, 0, 0]));
+
                 let mut offset = 0;
-                let mut offset_prev = 0;
                 for (node_id, node) in nodes.iter().enumerate() {
                     // Assign bytes
                     for (idx, bytes) in node.values.iter().enumerate() {
@@ -827,11 +812,19 @@ impl<F: Field> MPTConfig<F> {
                             &mut region, 
                             offset + idx,
                             idx_scalar.invert().unwrap_or(F::zero())
-                        );
+                        )?;
                     }
 
                     // Assign nodes
                     if node.start.is_some() {
+                        let mut cached_region = CachedRegion::new(
+                            &mut region, 
+                            power_of_randomness,
+                            TOTAL_WIDTH,
+                            StartRowType::Count as usize, 
+                            0,
+                            offset,
+                        );
                         println!("{}: start", offset);
                         assign!(region, (self.is_start, offset) => 1.scalar())?;
                         self.state_machine.start_config.assign(
@@ -842,6 +835,14 @@ impl<F: Field> MPTConfig<F> {
                             node,
                         )?;
                     } else if node.extension_branch.is_some() {
+                        let mut cached_region = CachedRegion::new(
+                            &mut region, 
+                            power_of_randomness,
+                            TOTAL_WIDTH,
+                            ExtensionBranchRowType::Count as usize, 
+                            0,
+                            offset,
+                        );
                         println!("{}: branch", offset);
                         assign!(region, (self.is_branch, offset) => 1.scalar())?;
                         self.state_machine.branch_config.assign(
@@ -852,6 +853,14 @@ impl<F: Field> MPTConfig<F> {
                             node,
                         )?;
                     } else if node.storage.is_some() {
+                        let mut cached_region = CachedRegion::new(
+                            &mut region, 
+                            power_of_randomness,
+                            TOTAL_WIDTH,
+                            StorageRowType::Count as usize, 
+                            0,
+                            offset,
+                        );
                         assign!(region, (self.is_storage, offset) => 1.scalar())?;
                         println!("{}: storage", offset);
                         self.state_machine.storage_config.assign(
@@ -862,6 +871,14 @@ impl<F: Field> MPTConfig<F> {
                             node,
                         )?;
                     } else if node.account.is_some() {
+                        let mut cached_region = CachedRegion::new(
+                            &mut region, 
+                            power_of_randomness,
+                            TOTAL_WIDTH,
+                            AccountRowType::Count as usize, 
+                            0,
+                            offset,
+                        );
                         assign!(region, (self.is_account, offset) => 1.scalar())?;
                         println!("{}: account", offset);
                         self.state_machine.account_config.assign(
@@ -874,7 +891,6 @@ impl<F: Field> MPTConfig<F> {
                     }
 
                     println!("height: {}", node.values.len());
-                    offset_prev = offset;
                     offset += node.values.len();
                 }
 
@@ -893,6 +909,13 @@ impl<F: Field> MPTConfig<F> {
         memory.assign(layouter, height)?;
 
         Ok(())
+    }
+
+    pub(crate) fn region_width(&self) -> usize {
+        self.mpt_table.columns().len() 
+            + self.main.bytes.len() 
+            + self.managed_columns.len() 
+            + self.memory.columns.len()
     }
 
     fn load_fixed_table(
@@ -1017,6 +1040,7 @@ impl<F: Field> MPTConfig<F> {
                 assignf!(region, (self.fixed_table[1], offset) => 0.scalar())?;
                 assignf!(region, (self.fixed_table[2], offset) => false.scalar())?;
                 offset += 1;
+
                 // Odd - First nibble is 1, the second nibble can be any value
                 for idx in 0..16 {
                     assignf!(region, (self.fixed_table[0], offset) => FixedTableTag::ExtOddKey.scalar())?;

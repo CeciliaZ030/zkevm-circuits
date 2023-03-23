@@ -117,6 +117,7 @@ impl<'r, 'b, F: FieldExt> CachedRegion<'r, 'b, F> {
         // Cache the value
         if let Result::Ok(cell) = &res {
             cell.value_field().map(|f| {
+                println!("column.index() {}", column.index());
                 self.advice[column.index() - self.width_start][offset - self.height_start] =
                     f.evaluate();
             });
@@ -178,6 +179,7 @@ impl<F: FieldExt> StoredExpression<F> {
         self.cell.assign(region, offset, Value::known(value))
     }
 }
+
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum CellType {

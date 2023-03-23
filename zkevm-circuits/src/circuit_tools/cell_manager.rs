@@ -1,5 +1,6 @@
 //! Cell manager
 use crate::{util::Expr, evm_circuit::param::N_BYTES_ACCOUNT_ADDRESS};
+use crate::evm_circuit::util::CachedRegion;
 use eth_types::Field;
 use halo2_proofs::{
     circuit::{AssignedCell, Region, Value},
@@ -118,6 +119,25 @@ impl<F: Field> Cell<F> {
             || Value::known(value),
         )
     }
+
+    pub(crate) fn assign_cached(
+        &self,
+        region: &mut CachedRegion<'_, '_, F>,
+        offset: usize,
+        value: F,
+    ) -> Result<AssignedCell<F, F>, Error> {
+        region.assign_advice(
+            || {
+                format!(
+                    "Cell column: {:?} and rotation: {}",
+                    self.column, self.rotation
+                )
+            },
+            self.column.unwrap(),
+            offset + self.rotation,
+            || Value::known(value),
+        )
+    }
 }
 
 impl<F: Field> Expr<F> for Cell<F> {
@@ -138,7 +158,14 @@ pub enum CellType {
     /// Storage type
     Storage,
     /// Lookup Byte
-    LookupByte,
+    Lookup(Table), 
+}
+
+/// Table being lookuped by cell
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Table {
+    /// Table type
+    Byte,
 }
 
 /// CellColumn
@@ -183,9 +210,9 @@ impl<F: Field> CellManager<F> {
                 expr: cells[c * height].expr(),
             });
         }
-        let LookupByte_count = 4;
-        for i in 0usize..LookupByte_count {
-            columns[i].cell_type = CellType::LookupByte;
+        let LOOKUP_BYTE_COUNT = 4;
+        for i in 0usize..LOOKUP_BYTE_COUNT {
+            columns[i].cell_type = CellType::Lookup(Table::Byte);
         }
 
 

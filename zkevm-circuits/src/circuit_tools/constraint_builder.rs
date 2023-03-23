@@ -1,11 +1,11 @@
 //! Circuit utilities
-use crate::{evm_circuit::util::rlc, util::Expr};
+use crate::{evm_circuit::{util::rlc, table::Lookup}, util::Expr};
 use eth_types::Field;
 use gadgets::util::{and, select, sum, Scalar};
 use halo2_proofs::plonk::{ConstraintSystem, Expression};
 use itertools::Itertools;
 
-use super::cell_manager::{Cell, CellManager, CellType, DataTransition, Trackable};
+use super::cell_manager::{Cell, CellManager, CellType, DataTransition, Trackable, Table};
 use crate::mpt_circuit::FixedTableTag;
 
 /// Lookup data
@@ -130,7 +130,7 @@ impl<F: Field> ConstraintBuilder<F> {
     }
 
     pub(crate) fn query_byte(&mut self) -> Cell<F> {
-        self.query_cell_with_type(CellType::LookupByte)
+        self.query_cell_with_type(CellType::Lookup(Table::Byte))
     }
 
     pub(crate) fn query_bytes<const N: usize>(&mut self) -> [Cell<F>; N] {
@@ -138,7 +138,7 @@ impl<F: Field> ConstraintBuilder<F> {
     }
 
     pub(crate) fn query_bytes_dyn(&mut self, count: usize) -> Vec<Cell<F>> {
-        self.query_cells(CellType::LookupByte, count)
+        self.query_cells(CellType::Lookup(Table::Byte), count)
     }
 
     pub(crate) fn query_cell(&mut self) -> Cell<F> {
@@ -180,14 +180,15 @@ impl<F: Field> ConstraintBuilder<F> {
     ) {
         if let Some(cm) = self.cell_manager.clone() {
             for column in cm.columns() {
-                if column.cell_type == CellType::LookupByte {
-                    self.lookup(
+                match column.cell_type {
+                    CellType::Storage => (),
+                    CellType::Lookup(Table::Byte) => self.lookup(
                         "Lookup byte", 
                         "fixed", 
                         vec![FixedTableTag::Range256.expr(), column.expr()]
-                    );
+                    ),
                 }
-        }
+            }
         }
         for lookup_name in lookup_names.iter() { 
             let lookups = self

@@ -2,6 +2,7 @@ use super::helpers::Indexable;
 use super::witness_row::{Node, StartRowType};
 use crate::circuit_tools::cell_manager::Cell;
 use crate::circuit_tools::constraint_builder::{RLCable, RLCableValue};
+use crate::evm_circuit::util::CachedRegion;
 use crate::mpt_circuit::helpers::{main_memory, MainData};
 use crate::{
     circuit,
@@ -138,4 +139,65 @@ impl<F: Field> StartConfig<F> {
 
         Ok(())
     }
+
+    pub fn assign_cached(
+        &self,
+        region: &mut CachedRegion<F>,
+        ctx: &MPTConfig<F>,
+        pv: &mut MPTState<F>,
+        offset: usize,
+        node: &Node,
+    ) -> Result<(), Error> {
+        let start = &node.start.clone().unwrap();
+
+        let root_bytes = [
+            node.values[StartRowType::RootS as usize].clone(),
+            node.values[StartRowType::RootC as usize].clone(),
+        ];
+
+        self.proof_type
+            .assign_cached(region, offset, start.proof_type.scalar())?;
+
+        let mut root = vec![0.scalar(); 2];
+        for is_s in [true, false] {
+            root[is_s.idx()] = root_bytes[is_s.idx()].rlc_value(ctx.r);
+        }
+
+        MainData::witness_store_cached(
+            region,
+            offset,
+            &mut pv.memory[main_memory()],
+            start.proof_type as usize,
+            false,
+            0.scalar(),
+            root[true.idx()],
+            root[false.idx()],
+        )?;
+
+        for is_s in [true, false] {
+            ParentData::witness_store_cached(
+                region,
+                offset,
+                &mut pv.memory[parent_memory(is_s)],
+                root[is_s.idx()],
+                true,
+                false,
+                root[is_s.idx()],
+            )?;
+            KeyData::witness_store_cached(
+                region,
+                offset,
+                &mut pv.memory[key_memory(is_s)],
+                F::zero(),
+                F::one(),
+                0,
+                false,
+                F::zero(),
+                F::one(),
+            )?;
+        }
+
+        Ok(())
+    }
+
 }

@@ -15,7 +15,7 @@ use super::constraint_builder::{merge_lookups, ConstraintBuilder};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Memory<F> {
-    columns: Vec<Column<Advice>>,
+    pub(crate) columns: Vec<Column<Advice>>,
     banks: Vec<MemoryBank<F>>,
 }
 
