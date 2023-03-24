@@ -21,6 +21,7 @@ use crate::{
     },
     mpt_circuit::{MPTConfig, MPTState},
 };
+use crate::evm_circuit::util::CachedRegion;
 
 #[derive(Clone, Debug)]
 pub(crate) struct ExtState<F> {
@@ -280,6 +281,96 @@ impl<F: Field> ExtensionGadget<F> {
 
         for is_s in [true, false] {
             self.rlp_value[is_s.idx()].assign(region, offset, &value_bytes[is_s.idx()])?;
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn assign_cached(
+        &self,
+        region: &mut CachedRegion<F>,
+        mpt_config: &MPTConfig<F>,
+        _pv: &mut MPTState<F>,
+        offset: usize,
+        key_data: &KeyDataWitness<F>,
+        key_rlc: &mut F,
+        key_mult: &mut F,
+        num_nibbles: &mut usize,
+        is_key_odd: &mut bool,
+        node: &Node,
+    ) -> Result<(), Error> {
+        let extension = &node.extension_branch.clone().unwrap().extension;
+
+        // Data
+        let key_bytes = [
+            node.values[ExtensionBranchRowType::KeyS as usize].clone(),
+            node.values[ExtensionBranchRowType::KeyC as usize].clone(),
+        ];
+        let value_bytes = [
+            node.values[ExtensionBranchRowType::ValueS as usize].clone(),
+            node.values[ExtensionBranchRowType::ValueC as usize].clone(),
+        ];
+
+        let rlp_key = self.rlp_key.assign_cached(
+            region,
+            offset,
+            &extension.list_rlp_bytes,
+            &key_bytes[true.idx()],
+        )?;
+
+        let mut ext_mult = F::one();
+        for _ in 0..rlp_key.num_bytes_on_key_row() {
+            ext_mult *= mpt_config.r;
+        }
+        self.mult.assign_cached(region, offset, ext_mult)?;
+
+        let is_key_part_odd = key_bytes[0][rlp_key.key_value.num_rlp_bytes()] >> 4 == 1;
+        self.is_key_part_odd
+            .assign_cached(region, offset, is_key_part_odd.scalar())?;
+
+        self.is_not_hashed.assign_cached(
+            region,
+            offset,
+            rlp_key.rlp_list.num_bytes().scalar(),
+            HASH_WIDTH.scalar(),
+        )?;
+
+        let mut key_len_mult = rlp_key.key_value.len();
+        if !(*is_key_odd && is_key_part_odd) {
+            key_len_mult -= 1;
+        }
+
+        // Update number of nibbles
+        *num_nibbles += num_nibbles::value(rlp_key.key_value.len(), is_key_part_odd);
+
+        // Update parity
+        *is_key_odd = if is_key_part_odd {
+            !*is_key_odd
+        } else {
+            *is_key_odd
+        };
+
+        // Key RLC
+        let (key_rlc_ext, _) = ext_key_rlc_calc_value(
+            rlp_key.key_value.clone(),
+            key_data.mult,
+            is_key_part_odd,
+            !*is_key_odd,
+            key_bytes.clone(),
+            mpt_config.r,
+        );
+        *key_rlc = key_data.rlc + key_rlc_ext;
+
+        // Key mult
+        let mut mult_key = 1.scalar();
+        for _ in 0..key_len_mult {
+            mult_key = mult_key * mpt_config.r;
+        }
+        self.mult_key.assign_cached(region, offset, mult_key)?;
+        *key_mult = key_data.mult * mult_key;
+
+        for is_s in [true, false] {
+            self.rlp_value[is_s.idx()].assign_cached(region, offset, &value_bytes[is_s.idx()])?;
         }
 
         Ok(())

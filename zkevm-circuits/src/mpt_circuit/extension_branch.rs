@@ -20,6 +20,7 @@ use crate::{
     mpt_circuit::witness_row::MptWitnessRow,
     mpt_circuit::{MPTConfig, MPTState},
 };
+use crate::evm_circuit::util::CachedRegion;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ExtensionBranchConfig<F> {
@@ -282,6 +283,123 @@ impl<F: Field> ExtensionBranchConfig<F> {
                     key_mult_post_branch,
                 )?;
                 ParentData::witness_store(
+                    region,
+                    offset,
+                    &mut pv.memory[parent_memory(is_s)],
+                    parent_data[is_s.idx()].rlc,
+                    parent_data[is_s.idx()].is_root,
+                    true,
+                    mod_node_hash_rlc[is_s.idx()],
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn assign_cached(
+        &self,
+        region: &mut CachedRegion<F>,
+        mpt_config: &MPTConfig<F>,
+        pv: &mut MPTState<F>,
+        offset: usize,
+        node: &Node,
+    ) -> Result<(), Error> {
+        let extension_branch = &node.extension_branch.clone().unwrap();
+
+        self.is_extension
+            .assign_cached(region, offset, extension_branch.is_extension.scalar())?;
+
+        let key_data =
+            self.key_data
+                .witness_load_cached(region, offset, &pv.memory[key_memory(true)], 0)?;
+        let mut parent_data = vec![ParentDataWitness::default(); 2];
+        for is_s in [true, false] {
+            parent_data[is_s.idx()] = self.parent_data[is_s.idx()].witness_load_cached(
+                region,
+                offset,
+                &mut pv.memory[parent_memory(is_s)],
+                0,
+            )?;
+            self.is_placeholder[is_s.idx()].assign_cached(
+                region,
+                offset,
+                extension_branch.is_placeholder[is_s.idx()].scalar(),
+            )?;
+        }
+
+        let mut key_rlc = key_data.rlc;
+        let mut key_mult = key_data.mult;
+        let mut num_nibbles = key_data.num_nibbles;
+        let mut is_key_odd = key_data.is_odd;
+
+        // Extension
+        if extension_branch.is_extension {
+            self.extension.assign_cached(
+                region,
+                mpt_config,
+                pv,
+                offset,
+                &key_data,
+                &mut key_rlc,
+                &mut key_mult,
+                &mut num_nibbles,
+                &mut is_key_odd,
+                node,
+            )?;
+        }
+
+        // Branch
+        let (key_rlc_post_branch, key_rlc_post_drifted, key_mult_post_branch, mod_node_hash_rlc) =
+            self.branch.assign_cached(
+                region,
+                mpt_config,
+                pv,
+                offset,
+                &extension_branch.is_placeholder,
+                &mut key_rlc,
+                &mut key_mult,
+                &mut num_nibbles,
+                &mut is_key_odd,
+                node,
+            )?;
+
+        // Set the new parent and key
+        for is_s in [true, false] {
+            if !extension_branch.is_placeholder[is_s.idx()] {
+                KeyData::witness_store_cached(
+                    region,
+                    offset,
+                    &mut pv.memory[key_memory(is_s)],
+                    key_rlc_post_branch, //后面新算的
+                    key_mult_post_branch,
+                    num_nibbles,
+                    false,
+                    0.scalar(),
+                    0.scalar(),
+                )?;
+                ParentData::witness_store_cached(
+                    region,
+                    offset,
+                    &mut pv.memory[parent_memory(is_s)],
+                    mod_node_hash_rlc[is_s.idx()],
+                    false,
+                    false,
+                    0.scalar(),
+                )?;
+            } else {
+                KeyData::witness_store_cached(
+                    region,
+                    offset,
+                    &mut pv.memory[key_memory(is_s)],
+                    key_data.rlc, 
+                    key_data.mult, //维持原样，相当于重新入栈
+                    key_data.num_nibbles,
+                    is_key_odd,
+                    key_rlc_post_drifted,
+                    key_mult_post_branch,
+                )?;
+                ParentData::witness_store_cached(
                     region,
                     offset,
                     &mut pv.memory[parent_memory(is_s)],

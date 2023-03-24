@@ -6,7 +6,7 @@ use halo2_proofs::{
     poly::Rotation,
 };
 
-use crate::mpt_circuit::helpers::{num_nibbles, IsEmptyTreeGadget};
+use crate::{mpt_circuit::helpers::{num_nibbles, IsEmptyTreeGadget}, evm_circuit::util::CachedRegion};
 use crate::table::ProofType;
 use crate::{
     circuit,
@@ -443,4 +443,184 @@ impl<F: Field> StorageLeafConfig<F> {
 
         Ok(())
     }
+    
+    pub fn assign_cached(
+        &self,
+        region: &mut CachedRegion<F>,
+        ctx: &MPTConfig<F>,
+        pv: &mut MPTState<F>,
+        offset: usize,
+        node: &Node,
+    ) -> Result<(), Error> {
+        let storage = &node.storage.clone().unwrap();
+
+        let key_bytes = [
+            node.values[StorageRowType::KeyS as usize].clone(),
+            node.values[StorageRowType::KeyC as usize].clone(),
+        ];
+        let value_bytes = [
+            node.values[StorageRowType::ValueS as usize].clone(),
+            node.values[StorageRowType::ValueC as usize].clone(),
+        ];
+        let drifted_bytes = node.values[StorageRowType::Drifted as usize].clone();
+        let wrong_bytes = node.values[StorageRowType::Wrong as usize].clone();
+
+        let main_data =
+            self.main_data
+                .witness_load_cached(region, offset, &pv.memory[main_memory()], 0)?;
+
+        let mut key_data = vec![KeyDataWitness::default(); 2];
+        let mut parent_data = vec![ParentDataWitness::default(); 2];
+        let mut key_rlc = vec![0.scalar(); 2];
+        let mut value_rlc = vec![0.scalar(); 2];
+        for is_s in [true, false] {
+            parent_data[is_s.idx()] = self.parent_data[is_s.idx()].witness_load_cached(
+                region,
+                offset,
+                &mut pv.memory[parent_memory(is_s)],
+                0,
+            )?;
+
+            let rlp_key_witness = self.rlp_key[is_s.idx()].assign_cached(
+                region,
+                offset,
+                &storage.list_rlp_bytes[is_s.idx()],
+                &key_bytes[is_s.idx()],
+            )?;
+
+            let (_, leaf_mult) = rlp_key_witness.rlc_leaf(ctx.r);
+            self.key_mult[is_s.idx()].assign_cached(region, offset, leaf_mult)?;
+
+            self.is_not_hashed[is_s.idx()].assign_cached(
+                region,
+                offset,
+                rlp_key_witness.rlp_list.num_bytes().scalar(),
+                32.scalar(),
+            )?;
+
+            key_data[is_s.idx()] = self.key_data[is_s.idx()].witness_load_cached(
+                region,
+                offset,
+                &mut pv.memory[key_memory(is_s)],
+                0,
+            )?;
+            KeyData::witness_store_cached(
+                region,
+                offset,
+                &mut pv.memory[key_memory(is_s)],
+                F::zero(),
+                F::one(),
+                0,
+                false,
+                F::zero(),
+                F::one(),
+            )?;
+
+            // Key
+            (key_rlc[is_s.idx()], _) = rlp_key_witness.key.key(
+                rlp_key_witness.key_value.clone(),
+                key_data[is_s.idx()].rlc,
+                key_data[is_s.idx()].mult,
+                ctx.r,
+            );
+
+            // Value
+            for (cell, byte) in self.value_rlp_bytes[is_s.idx()]
+                .iter()
+                .zip(storage.value_rlp_bytes[is_s.idx()].iter())
+            {
+                cell.assign_cached(region, offset, byte.scalar())?;
+            }
+            let value_witness = self.rlp_value[is_s.idx()].assign_cached(
+                region,
+                offset,
+                &storage.value_rlp_bytes[is_s.idx()],
+            )?;
+            let value_long_witness =
+                self.rlp_value_long[is_s.idx()].assign_cached(region, offset, &value_bytes[is_s.idx()])?;
+            value_rlc[is_s.idx()] = if value_witness.is_short() {
+                value_witness.rlc_value(ctx.r)
+            } else {
+                value_long_witness.rlc_value(ctx.r)
+            };
+
+            ParentData::witness_store_cached(
+                region,
+                offset,
+                &mut pv.memory[parent_memory(is_s)],
+                F::zero(),
+                true,
+                false,
+                F::zero(),
+            )?;
+
+            self.is_in_empty_trie[is_s.idx()].assign_cached(
+                region,
+                offset,
+                parent_data[is_s.idx()].rlc,
+                ctx.r,
+            )?;
+        }
+
+        let is_storage_mod_proof = self.is_storage_mod_proof.assign_cached(
+            region,
+            offset,
+            main_data.proof_type.scalar(),
+            ProofType::StorageChanged.scalar(),
+        )? == true.scalar();
+        let is_non_existing_proof = self.is_non_existing_storage_proof.assign_cached(
+            region,
+            offset,
+            main_data.proof_type.scalar(),
+            ProofType::StorageDoesNotExist.scalar(),
+        )? == true.scalar();
+
+        // Drifted leaf handling
+        self.drifted.assign_cached(
+            region,
+            offset,
+            &parent_data,
+            &storage.drifted_rlp_bytes,
+            &drifted_bytes,
+            ctx.r,
+        )?;
+
+        // Wrong leaf handling
+        let key_rlc = self.wrong.assign_cached(
+            region,
+            offset,
+            is_non_existing_proof,
+            &key_rlc,
+            &storage.wrong_rlp_bytes,
+            &wrong_bytes,
+            false,
+            key_data[true.idx()].clone(),
+            ctx.r,
+        )?;
+
+        // Put the data in the lookup table
+        let proof_type = if is_storage_mod_proof {
+            ProofType::StorageChanged
+        } else if is_non_existing_proof {
+            ProofType::StorageDoesNotExist
+        } else {
+            ProofType::Disabled
+        };
+        ctx.mpt_table.assign_cached(
+            region,
+            offset,
+            &MptUpdateRow {
+                address_rlc: main_data.address_rlc,
+                proof_type: proof_type.scalar(),
+                key_rlc: key_rlc,
+                value_prev: value_rlc[true.idx()],
+                value: value_rlc[false.idx()],
+                root_prev: main_data.root_prev,
+                root: main_data.root,
+            },
+        )?;
+
+        Ok(())
+    }
+
 }

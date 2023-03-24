@@ -27,7 +27,7 @@ use crate::{
         param::{KEY_LEN_IN_NIBBLES, RLP_LIST_LONG, RLP_LONG},
         FixedTableTag,
     },
-    mpt_circuit::{MPTConfig, MPTState},
+    mpt_circuit::{MPTConfig, MPTState}, evm_circuit::util::CachedRegion,
 };
 use crate::{
     circuit_tools::constraint_builder::RLCChainable,
@@ -645,4 +645,257 @@ impl<F: Field> AccountLeafConfig<F> {
 
         Ok(())
     }
+
+    pub fn assign_cached(
+        &self,
+        region: &mut CachedRegion<F>,
+        ctx: &MPTConfig<F>,
+        pv: &mut MPTState<F>,
+        offset: usize,
+        node: &Node,
+    ) -> Result<(), Error> {
+        let account = &node.account.clone().unwrap();
+
+        let key_bytes = [
+            node.values[AccountRowType::KeyS as usize].clone(),
+            node.values[AccountRowType::KeyC as usize].clone(),
+        ];
+        let nonce_bytes = [
+            node.values[AccountRowType::NonceS as usize].clone(),
+            node.values[AccountRowType::NonceC as usize].clone(),
+        ];
+        let balance_bytes = [
+            node.values[AccountRowType::BalanceS as usize].clone(),
+            node.values[AccountRowType::BalanceC as usize].clone(),
+        ];
+        let storage_bytes = [
+            node.values[AccountRowType::StorageS as usize].clone(),
+            node.values[AccountRowType::StorageC as usize].clone(),
+        ];
+        let codehash_bytes = [
+            node.values[AccountRowType::CodehashS as usize].clone(),
+            node.values[AccountRowType::CodehashC as usize].clone(),
+        ];
+        let drifted_bytes = node.values[AccountRowType::Drifted as usize].clone();
+        let wrong_bytes = node.values[AccountRowType::Wrong as usize].clone();
+
+        let main_data =
+            self.main_data
+                .witness_load_cached(region, offset, &pv.memory[main_memory()], 0)?;
+
+        // Key
+        let mut key_rlc = vec![0.scalar(); 2];
+        let mut nonce_rlc = vec![0.scalar(); 2];
+        let mut balance_rlc = vec![0.scalar(); 2];
+        let mut storage_rlc = vec![0.scalar(); 2];
+        let mut codehash_rlc = vec![0.scalar(); 2];
+        let mut key_data = vec![KeyDataWitness::default(); 2];
+        let mut parent_data = vec![ParentDataWitness::default(); 2];
+        for is_s in [true, false] {
+            for (cell, byte) in self.value_rlp_bytes[is_s.idx()]
+                .iter()
+                .zip(account.value_rlp_bytes[is_s.idx()].iter())
+            {
+                cell.assign_cached(region, offset, byte.scalar())?;
+            }
+
+            key_data[is_s.idx()] = self.key_data[is_s.idx()].witness_load_cached(
+                region,
+                offset,
+                &mut pv.memory[key_memory(is_s)],
+                0,
+            )?;
+
+            parent_data[is_s.idx()] = self.parent_data[is_s.idx()].witness_load_cached(
+                region,
+                offset,
+                &mut pv.memory[parent_memory(is_s)],
+                0,
+            )?;
+
+            self.is_in_empty_trie[is_s.idx()].assign_cached(
+                region,
+                offset,
+                parent_data[is_s.idx()].rlc,
+                ctx.r,
+            )?;
+
+            let rlp_key_witness = self.rlp_key[is_s.idx()].assign_cached(
+                region,
+                offset,
+                &account.list_rlp_bytes[is_s.idx()],
+                &key_bytes[is_s.idx()],
+            )?;
+            let nonce_witness =
+                self.rlp_nonce[is_s.idx()].assign_cached(region, offset, &nonce_bytes[is_s.idx()])?;
+            let balance_witness =
+                self.rlp_balance[is_s.idx()].assign_cached(region, offset, &balance_bytes[is_s.idx()])?;
+            let storage_witness =
+                self.rlp_storage[is_s.idx()].assign_cached(region, offset, &storage_bytes[is_s.idx()])?;
+            let codehash_witness = self.rlp_codehash[is_s.idx()].assign_cached(
+                region,
+                offset,
+                &codehash_bytes[is_s.idx()],
+            )?;
+
+            nonce_rlc[is_s.idx()] = nonce_witness.rlc_value(ctx.r);
+            balance_rlc[is_s.idx()] = balance_witness.rlc_value(ctx.r);
+            storage_rlc[is_s.idx()] = storage_witness.rlc_value(ctx.r);
+            codehash_rlc[is_s.idx()] = codehash_witness.rlc_value(ctx.r);
+
+            // + 4 because of s_rlp1, s_rlp2, c_rlp1, c_rlp2
+            let mut mult_nonce = F::one();
+            for _ in 0..nonce_witness.num_bytes() + 4 {
+                mult_nonce *= ctx.r;
+            }
+            let mut mult_balance = F::one();
+            for _ in 0..balance_witness.num_bytes() {
+                mult_balance *= ctx.r;
+            }
+            self.nonce_mult[is_s.idx()].assign_cached(region, offset, mult_nonce)?;
+            self.balance_mult[is_s.idx()].assign_cached(region, offset, mult_balance)?;
+
+            // Key
+            (key_rlc[is_s.idx()], _) = rlp_key_witness.key.key(
+                rlp_key_witness.key_value.clone(),
+                key_data[is_s.idx()].rlc,
+                key_data[is_s.idx()].mult,
+                ctx.r,
+            );
+
+            let mut key_mult = F::one();
+            for _ in 0..rlp_key_witness.num_bytes_on_key_row() {
+                key_mult *= ctx.r;
+            }
+            self.key_mult[is_s.idx()].assign_cached(region, offset, key_mult)?;
+
+            // Update key and parent state
+            KeyData::witness_store_cached(
+                region,
+                offset,
+                &mut pv.memory[key_memory(is_s)],
+                F::zero(),
+                F::one(),
+                0,
+                false,
+                F::zero(),
+                F::one(),
+            )?;
+            ParentData::witness_store_cached(
+                region,
+                offset,
+                &mut pv.memory[parent_memory(is_s)],
+                storage_rlc[is_s.idx()],
+                true,
+                false,
+                storage_rlc[is_s.idx()],
+            )?;
+        }
+
+        // Anything following this node is below the account
+        MainData::witness_store_cached(
+            region,
+            offset,
+            &mut pv.memory[main_memory()],
+            main_data.proof_type,
+            true,
+            account.address.rlc_value(ctx.r),
+            main_data.root_prev,
+            main_data.root,
+        )?;
+
+        // Proof types
+        let is_non_existing_proof = self.is_non_existing_account_proof.assign_cached(
+            region,
+            offset,
+            main_data.proof_type.scalar(),
+            ProofType::AccountDoesNotExist.scalar(),
+        )? == true.scalar();
+        let is_account_delete_mod = self.is_account_delete_mod.assign_cached(
+            region,
+            offset,
+            main_data.proof_type.scalar(),
+            ProofType::AccountDestructed.scalar(),
+        )? == true.scalar();
+        let is_nonce_mod = self.is_nonce_mod.assign_cached(
+            region,
+            offset,
+            main_data.proof_type.scalar(),
+            ProofType::NonceChanged.scalar(),
+        )? == true.scalar();
+        let is_balance_mod = self.is_balance_mod.assign_cached(
+            region,
+            offset,
+            main_data.proof_type.scalar(),
+            ProofType::BalanceChanged.scalar(),
+        )? == true.scalar();
+        let is_storage_mod = self.is_storage_mod.assign_cached(
+            region,
+            offset,
+            main_data.proof_type.scalar(),
+            ProofType::StorageChanged.scalar(),
+        )? == true.scalar();
+        let is_codehash_mod = self.is_codehash_mod.assign_cached(
+            region,
+            offset,
+            main_data.proof_type.scalar(),
+            ProofType::CodeHashExists.scalar(),
+        )? == true.scalar();
+
+        // Drifted leaf handling
+        self.drifted.assign_cached(
+            region,
+            offset,
+            &parent_data,
+            &account.drifted_rlp_bytes,
+            &drifted_bytes,
+            ctx.r,
+        )?;
+
+        // Wrong leaf handling
+        self.wrong.assign_cached(
+            region,
+            offset,
+            is_non_existing_proof,
+            &key_rlc,
+            &account.wrong_rlp_bytes,
+            &wrong_bytes,
+            true,
+            key_data[true.idx()].clone(),
+            ctx.r,
+        )?;
+
+        // Put the data in the lookup table
+        let (proof_type, value) = if is_nonce_mod {
+            (ProofType::NonceChanged, nonce_rlc)
+        } else if is_balance_mod {
+            (ProofType::BalanceChanged, balance_rlc)
+        } else if is_storage_mod {
+            (ProofType::StorageChanged, storage_rlc)
+        } else if is_codehash_mod {
+            (ProofType::CodeHashExists, codehash_rlc)
+        } else if is_account_delete_mod {
+            (ProofType::AccountDestructed, vec![0.scalar(); 2])
+        } else if is_non_existing_proof {
+            (ProofType::AccountDoesNotExist, vec![0.scalar(); 2])
+        } else {
+            (ProofType::Disabled, vec![0.scalar(); 2])
+        };
+        ctx.mpt_table.assign_cached(
+            region,
+            offset,
+            &MptUpdateRow {
+                address_rlc: account.address.rlc_value(ctx.r),
+                proof_type: proof_type.scalar(),
+                key_rlc: 0.scalar(),
+                value_prev: value[true.idx()],
+                value: value[false.idx()],
+                root_prev: main_data.root_prev,
+                root: main_data.root,
+            },
+        )?;
+
+        Ok(())
+    }
+
 }

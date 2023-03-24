@@ -2,7 +2,7 @@
 
 use crate::circuit_tools::constraint_builder::ConstraintBuilder;
 use crate::copy_circuit::number_or_hash_to_field;
-use crate::evm_circuit::util::{rlc, RandomLinearCombination};
+use crate::evm_circuit::util::{rlc, RandomLinearCombination, CachedRegion};
 use crate::util::build_tx_log_address;
 use crate::util::Challenges;
 use crate::witness::{
@@ -547,6 +547,24 @@ impl MptTable {
         }
         Ok(())
     }
+
+    pub(crate) fn assign_cached<F: Field>(
+        &self,
+        region: &mut CachedRegion<F>,
+        offset: usize,
+        row: &MptUpdateRow<F>,
+    ) -> Result<(), Error> {
+        for (column, value) in self.columns().iter().zip_eq(row.values()) {
+            region.assign_advice(
+                || "assign mpt table row value",
+                *column,
+                offset,
+                || Value::known(value),
+            )?;
+        }
+        Ok(())
+    }
+
 
     pub(crate) fn load<F: Field>(
         &self,

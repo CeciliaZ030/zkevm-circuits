@@ -9,7 +9,7 @@ use crate::{
         FixedTableTag,
         param::{RLP_LIST_LONG, RLP_LIST_SHORT, RLP_SHORT}
     },
-    util::Expr,
+    util::Expr, evm_circuit::util::CachedRegion,
 };
 use eth_types::Field;
 use gadgets::util::{not, Scalar};
@@ -101,6 +101,45 @@ impl<F: Field> RLPListGadget<F> {
             bytes: bytes.to_vec(),
         })
     }
+
+    pub(crate) fn assign_cached(
+        &self,
+        region: &mut CachedRegion<F>,
+        offset: usize,
+        bytes: &[u8],
+    ) -> Result<RLPListWitness, Error> {
+        const RLP_LIST_LONG_1: u8 = RLP_LIST_LONG + 1;
+        const RLP_LIST_LONG_2: u8 = RLP_LIST_LONG + 2;
+
+        let mut is_short = false;
+        let mut is_long = false;
+        let mut is_very_long = false;
+        let mut is_string = false;
+        match bytes[0] {
+            // 192 - 247
+            RLP_LIST_SHORT..=RLP_LIST_LONG => is_short = true,
+            // 248
+            RLP_LIST_LONG_1 => is_long = true,
+            // 249
+            RLP_LIST_LONG_2 => is_very_long = true,
+            _ => is_string = true,
+        }
+
+        self.is_short.assign_cached(region, offset, F::from(is_short))?;
+        self.is_long.assign_cached(region, offset, F::from(is_long))?;
+        self.is_very_long
+            .assign_cached(region, offset, F::from(is_very_long))?;
+        self.is_string.assign_cached(region, offset, F::from(is_string))?;
+
+        Ok(RLPListWitness {
+            is_short,
+            is_long,
+            is_very_long,
+            is_string,
+            bytes: bytes.to_vec(),
+        })
+    }
+
 
     // Single RLP byte, length at most 55 bytes
     pub(crate) fn is_list(&self) -> Expression<F> {
@@ -256,6 +295,20 @@ impl<F: Field> RLPListDataGadget<F> {
         self.rlp_list.assign(region, offset, list_bytes)
     }
 
+
+    pub(crate) fn assign_cached(
+        &self,
+        region: &mut CachedRegion<F>,
+        offset: usize,
+        list_bytes: &[u8],
+    ) -> Result<RLPListWitness, Error> {
+        for (cell, byte) in self.rlp_list_bytes.iter().zip(list_bytes.iter()) {
+            cell.assign_cached(region, offset, byte.scalar())?;
+        }
+        self.rlp_list.assign_cached(region, offset, list_bytes)
+    }
+
+
     pub(crate) fn rlc_rlp(&self, r: &[Expression<F>]) -> (Expression<F>, Expression<F>) {
         self.rlp_list.rlc_rlp_only(&r)
     }
@@ -343,6 +396,46 @@ impl<F: Field> RLPValueGadget<F> {
             bytes: bytes.to_vec(),
         })
     }
+
+    pub(crate) fn assign_cached(
+        &self,
+        region: &mut CachedRegion<F>,
+        offset: usize,
+        bytes: &[u8],
+    ) -> Result<RLPValueWitness, Error> {
+        const RLP_SHORT_INCLUSIVE: u8 = RLP_SHORT - 1;
+        const RLP_LONG_EXCLUSIVE: u8 = RLP_LONG + 1;
+        const RLP_VALUE_MAX: u8 = RLP_LIST_SHORT - 1;
+
+        let mut is_short = false;
+        let mut is_long = false;
+        let mut is_very_long = false;
+        let mut is_list = false;
+        match bytes[0] {
+            // 0 - 127
+            0..=RLP_SHORT_INCLUSIVE => is_short = true,
+            // 128 - 183
+            RLP_SHORT..=RLP_LONG => is_long = true,
+            // 189 - 191
+            RLP_LONG_EXCLUSIVE..=RLP_VALUE_MAX => is_very_long = true,
+            _ => is_list = true,
+        }
+
+        self.is_short.assign_cached(region, offset, F::from(is_short))?;
+        self.is_long.assign_cached(region, offset, F::from(is_long))?;
+        self.is_very_long
+            .assign_cached(region, offset, F::from(is_very_long))?;
+        self.is_list.assign_cached(region, offset, F::from(is_list))?;
+
+        Ok(RLPValueWitness {
+            is_short,
+            is_long,
+            is_very_long,
+            is_list,
+            bytes: bytes.to_vec(),
+        })
+    }
+
 
     // Returns true if this is indeed a string RLP
     pub(crate) fn is_string(&self) -> Expression<F> {
@@ -614,6 +707,24 @@ impl<F: Field> RLPItemGadget<F> {
             bytes: bytes.to_vec(),
         })
     }
+
+    pub(crate) fn assign_cached(
+        &self,
+        region: &mut CachedRegion<F>,
+        offset: usize,
+        bytes: &[u8],
+    ) -> Result<RLPItemWitness, Error> {
+        let value_witness = self.value.assign_cached(region, offset, bytes)?;
+        let list_witness = self.list.assign_cached(region, offset, bytes)?;
+        assert!(!(value_witness.is_string() && list_witness.is_list()));
+
+        Ok(RLPItemWitness {
+            value: value_witness,
+            list: list_witness,
+            bytes: bytes.to_vec(),
+        })
+    }
+
 
     // Single RLP byte containing the byte value
     pub(crate) fn is_short(&self) -> Expression<F> {

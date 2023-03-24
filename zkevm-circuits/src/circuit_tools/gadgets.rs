@@ -6,7 +6,7 @@ use halo2_proofs::{
     plonk::{Error, Expression},
 };
 
-use crate::evm_circuit::util::{from_bytes, pow_of_two};
+use crate::evm_circuit::util::{from_bytes, pow_of_two, CachedRegion};
 
 use super::{cell_manager::Cell, constraint_builder::ConstraintBuilder};
 
@@ -53,6 +53,22 @@ impl<F: Field> IsZeroGadget<F> {
             F::zero()
         })
     }
+
+    pub(crate) fn assign_cached(
+        &self,
+        region: &mut CachedRegion<F>,
+        offset: usize,
+        value: F,
+    ) -> Result<F, Error> {
+        let inverse = value.invert().unwrap_or(F::zero());
+        self.inverse.assign_cached(region, offset, inverse)?;
+        Ok(if value.is_zero().into() {
+            F::one()
+        } else {
+            F::zero()
+        })
+    }
+
 }
 
 /// Returns `1` when `lhs == rhs`, and returns `0` otherwise.
@@ -85,6 +101,18 @@ impl<F: Field> IsEqualGadget<F> {
     ) -> Result<F, Error> {
         self.is_zero.assign(region, offset, lhs - rhs)
     }
+
+
+    pub(crate) fn assign_cached(
+        &self,
+        region: &mut CachedRegion<F>,
+        offset: usize,
+        lhs: F,
+        rhs: F,
+    ) -> Result<F, Error> {
+        self.is_zero.assign_cached(region, offset, lhs - rhs)
+    }
+
 }
 
 /// Returns `1` when `lhs < rhs`, and returns `0` otherwise.
@@ -153,6 +181,29 @@ impl<F: Field, const N_BYTES: usize> LtGadget<F, N_BYTES> {
 
         Ok((if lt { F::one() } else { F::zero() }, diff_bytes.to_vec()))
     }
+
+    pub(crate) fn assign_cached(
+        &self,
+        region: &mut CachedRegion<F>,
+        offset: usize,
+        lhs: F,
+        rhs: F,
+    ) -> Result<(F, Vec<u8>), Error> {
+        // Set `lt`
+        let lt = lhs < rhs;
+        self.lt
+            .assign_cached(region, offset, if lt { F::one() } else { F::zero() })?;
+
+        // Set the bytes of diff
+        let diff = (lhs - rhs) + (if lt { self.range } else { F::zero() });
+        let diff_bytes = diff.to_repr();
+        for (idx, diff) in self.diff.as_ref().unwrap().iter().enumerate() {
+            diff.assign_cached(region, offset, F::from(diff_bytes[idx] as u64))?;
+        }
+
+        Ok((if lt { F::one() } else { F::zero() }, diff_bytes.to_vec()))
+    }
+    
 
     pub(crate) fn diff_bytes(&self) -> Vec<Cell<F>> {
         self.diff.as_ref().unwrap().to_vec()

@@ -116,6 +116,24 @@ impl<F: Field> LeafKeyGadget<F> {
             has_no_nibble: has_no_nibble != 0.scalar(),
         })
     }
+
+    pub(crate) fn assign_cached(
+        &self,
+        region: &mut CachedRegion<F>,
+        offset: usize,
+        rlp_key: RLPValueWitness,
+    ) -> Result<LeafKeyWitness, Error> {
+        let has_no_nibble = self.has_no_nibbles.assign_cached(
+            region,
+            offset,
+            F::from(rlp_key.bytes[0] as u64),
+            F::from(KEY_TERMINAL_PREFIX_EVEN as u64),
+        )?;
+        Ok(LeafKeyWitness {
+            has_no_nibble: has_no_nibble != 0.scalar(),
+        })
+    }
+
 }
 
 impl LeafKeyWitness {
@@ -287,6 +305,27 @@ impl<F: Field> ListKeyGadget<F> {
         let rlp_list = self.rlp_list.assign(region, offset, list_bytes)?;
         let key_value = self.key_value.assign(region, offset, bytes)?;
         let key = self.key.assign(region, offset, key_value.clone())?;
+
+        Ok(ListKeyWitness {
+            rlp_list,
+            key_value,
+            key,
+        })
+    }
+
+    pub(crate) fn assign_cached(
+        &self,
+        region: &mut CachedRegion<F>,
+        offset: usize,
+        list_bytes: &[u8],
+        bytes: &[u8],
+    ) -> Result<ListKeyWitness, Error> {
+        for (cell, byte) in self.rlp_list_bytes.iter().zip(list_bytes.iter()) {
+            cell.assign_cached(region, offset, byte.scalar())?;
+        }
+        let rlp_list = self.rlp_list.assign_cached(region, offset, list_bytes)?;
+        let key_value = self.key_value.assign_cached(region, offset, bytes)?;
+        let key = self.key.assign_cached(region, offset, key_value.clone())?;
 
         Ok(ListKeyWitness {
             rlp_list,
@@ -496,6 +535,35 @@ impl<F: Field> KeyData<F> {
             drifted_mult: values[6],
         })
     }
+
+    pub(crate) fn witness_load_cached(
+        &self,
+        region:  &mut CachedRegion<F>,
+        offset: usize,
+        memory: &MemoryBank<F>,
+        load_offset: usize,
+    ) -> Result<KeyDataWitness<F>, Error> {
+        let values = memory.witness_load(load_offset);
+
+        self.rlc.assign_cached(region, offset, values[0])?;
+        self.mult.assign_cached(region, offset, values[1])?;
+        self.num_nibbles.assign_cached(region, offset, values[2])?;
+        self.is_odd.assign_cached(region, offset, values[3])?;
+        self.drifted_is_odd.assign_cached(region, offset, values[4])?;
+        self.drifted_rlc.assign_cached(region, offset, values[5])?;
+        self.drifted_mult.assign_cached(region, offset, values[6])?;
+
+        Ok(KeyDataWitness {
+            rlc: values[0],
+            mult: values[1],
+            num_nibbles: values[2].get_lower_32() as usize,
+            is_odd: values[3] != F::zero(),
+            drifted_is_odd: values[4] != F::zero(),
+            drifted_rlc: values[5],
+            drifted_mult: values[6],
+        })
+    }
+
 }
 
 #[derive(Clone, Debug, Default)]
@@ -604,6 +672,28 @@ impl<F: Field> ParentData<F> {
         self.is_root.assign(region, offset, values[1])?;
         self.is_placeholder.assign(region, offset, values[2])?;
         self.placeholder_rlc.assign(region, offset, values[3])?;
+
+        Ok(ParentDataWitness {
+            rlc: values[0],
+            is_root: values[1] == 1.scalar(),
+            is_placeholder: values[2] == 1.scalar(),
+            placeholder_rlc: values[3],
+        })
+    }
+
+    pub(crate) fn witness_load_cached(
+        &self,
+        region: &mut CachedRegion<F>,
+        offset: usize,
+        memory: &MemoryBank<F>,
+        load_offset: usize,
+    ) -> Result<ParentDataWitness<F>, Error> {
+        let values = memory.witness_load(load_offset);
+
+        self.rlc.assign_cached(region, offset, values[0])?;
+        self.is_root.assign_cached(region, offset, values[1])?;
+        self.is_placeholder.assign_cached(region, offset, values[2])?;
+        self.placeholder_rlc.assign_cached(region, offset, values[3])?;
 
         Ok(ParentDataWitness {
             rlc: values[0],
@@ -738,6 +828,31 @@ impl<F: Field> MainData<F> {
             root: values[4],
         })
     }
+
+    pub(crate) fn witness_load_cached(
+        &self,
+        region: &mut CachedRegion<F>,
+        offset: usize,
+        memory: &MemoryBank<F>,
+        load_offset: usize,
+    ) -> Result<MainDataWitness<F>, Error> {
+        let values = memory.witness_load(load_offset);
+
+        self.proof_type.assign_cached(region, offset, values[0])?;
+        self.is_below_account.assign_cached(region, offset, values[1])?;
+        self.address_rlc.assign_cached(region, offset, values[2])?;
+        self.root_prev.assign_cached(region, offset, values[3])?;
+        self.root.assign_cached(region, offset, values[4])?;
+
+        Ok(MainDataWitness {
+            proof_type: values[0].get_lower_32() as usize,
+            is_below_account: values[1] == 1.scalar(),
+            address_rlc: values[2],
+            root_prev: values[3],
+            root: values[4],
+        })
+    }
+
 }
 
 /// Add the nibble from the drifted branch
@@ -1004,6 +1119,21 @@ impl<F: Field> IsEmptyTreeGadget<F> {
             .assign(region, offset, parent_rlc, 0.scalar())?;
         Ok(())
     }
+
+    pub(crate) fn assign_cached(
+        &self,
+        region: &mut CachedRegion<F>,
+        offset: usize,
+        parent_rlc: F,
+        r: F,
+    ) -> Result<(), Error> {
+        self.is_in_empty_trie
+            .assign_cached(region, offset, parent_rlc, EMPTY_TRIE_HASH.rlc_value(r))?;
+        self.is_in_empty_branch
+            .assign_cached(region, offset, parent_rlc, 0.scalar())?;
+        Ok(())
+    }
+
 }
 
 /// Handles drifted leaves
@@ -1082,6 +1212,26 @@ impl<F: Field> DriftedGadget<F> {
         }
         Ok(())
     }
+
+    pub(crate) fn assign_cached(
+        &self,
+        region: &mut CachedRegion<F>,
+        offset: usize,
+        parent_data: &[ParentDataWitness<F>],
+        drifted_list_bytes: &[u8],
+        drifted_bytes: &[u8],
+        r: F,
+    ) -> Result<(), Error> {
+        if parent_data[true.idx()].is_placeholder || parent_data[false.idx()].is_placeholder {
+            let drifted_key_witness =
+                self.drifted_rlp_key
+                    .assign_cached(region, offset, drifted_list_bytes, drifted_bytes)?;
+            let (_, leaf_mult) = drifted_key_witness.rlc_leaf(r);
+            self.drifted_mult.assign_cached(region, offset, leaf_mult)?;
+        }
+        Ok(())
+    }
+
 }
 
 /// Handles wrong leaves
@@ -1171,4 +1321,40 @@ impl<F: Field> WrongGadget<F> {
             Ok(key_rlc[for_placeholder_s.idx()])
         }
     }
+
+    pub(crate) fn assign_cached(
+        &self,
+        region: &mut CachedRegion<F>,
+        offset: usize,
+        is_non_existing: bool,
+        key_rlc: &[F],
+        list_bytes: &[u8],
+        wrong_bytes: &[u8],
+        for_placeholder_s: bool,
+        key_data: KeyDataWitness<F>,
+        r: F,
+    ) -> Result<F, Error> {
+        if is_non_existing {
+            let wrong_witness =
+                self.wrong_rlp_key
+                    .assign_cached(region, offset, list_bytes, wrong_bytes)?;
+            let (key_rlc_wrong, _) = wrong_witness.key.key(
+                wrong_witness.key_value.clone(),
+                key_data.rlc,
+                key_data.mult,
+                r,
+            );
+
+            self.is_key_equal.assign_cached(
+                region,
+                offset,
+                key_rlc[for_placeholder_s.idx()],
+                key_rlc_wrong,
+            )?;
+            Ok(key_rlc_wrong)
+        } else {
+            Ok(key_rlc[for_placeholder_s.idx()])
+        }
+    }
+
 }

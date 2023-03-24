@@ -23,6 +23,7 @@ use crate::{
     mpt_circuit::{helpers::Indexable, param::RLP_NIL, FixedTableTag},
     mpt_circuit::{MPTConfig, MPTState},
 };
+use crate::evm_circuit::util::CachedRegion;
 
 #[derive(Clone, Debug)]
 pub(crate) struct BranchState<F> {
@@ -419,6 +420,130 @@ impl<F: Field> BranchGadget<F> {
                 }
             };
             self.mod_rlc[is_s.idx()].assign(region, offset, mod_node_hash_rlc[is_s.idx()])?;
+        }
+
+        Ok((
+            key_rlc_post_branch,
+            key_rlc_post_drifted,
+            key_mult_post_branch,
+            mod_node_hash_rlc,
+        ))
+    }
+
+    pub(crate) fn assign_cached(
+        &self,
+        region: &mut CachedRegion<F>,
+        mpt_config: &MPTConfig<F>,
+        _pv: &mut MPTState<F>,
+        offset: usize,
+        is_placeholder: &[bool; 2],
+        key_rlc: &mut F,
+        key_mult: &mut F,
+        num_nibbles: &mut usize,
+        is_key_odd: &mut bool,
+        node: &Node,
+    ) -> Result<(F, F, F, [F; 2]), Error> {
+        let branch = &node.extension_branch.clone().unwrap().branch;
+
+        // Data
+        let child_bytes: [Vec<u8>; ARITY + 1] = array_init::array_init(|i| node.values[i].clone());
+
+        for is_s in [true, false] {
+            let rlp_list_witness = self.rlp_list[is_s.idx()].assign_cached(
+                region,
+                offset,
+                &branch.list_rlp_bytes[is_s.idx()],
+            )?;
+            self.is_not_hashed[is_s.idx()].assign_cached(
+                region,
+                offset,
+                rlp_list_witness.num_bytes().scalar(),
+                HASH_WIDTH.scalar(),
+            )?;
+        }
+
+        for node_index in 0..ARITY {
+            self.is_modified[node_index].assign_cached(
+                region,
+                offset,
+                (node_index == branch.modified_index).scalar(),
+            )?;
+            self.is_drifted[node_index].assign_cached(
+                region,
+                offset,
+                (node_index == branch.drifted_index).scalar(),
+            )?;
+        }
+
+        // Process the branch children
+        let mut child_witnesses = vec![RLPItemWitness::default(); ARITY + 1];
+        for node_index in 0..ARITY + 1 {
+            let child_witness =
+                self.children[node_index]
+                    .rlp
+                    .assign_cached(region, offset, &child_bytes[node_index])?;
+            child_witnesses[node_index] = child_witness.clone();
+
+            let mut node_mult_diff = F::one();
+            for _ in 0..child_witness.num_bytes() {
+                node_mult_diff *= mpt_config.r;
+            }
+
+            self.children[node_index]
+                .mult_diff
+                .assign_cached(region, offset, node_mult_diff)?;
+            self.children[node_index].rlc_branch.assign_cached(
+                region,
+                offset,
+                child_witness.rlc_branch(mpt_config.r),
+            )?;
+            self.children[node_index].rlc_rlp.assign_cached(
+                region,
+                offset,
+                child_witness.rlc_rlp(mpt_config.r),
+            )?;
+            let _is_hashed = self.children[node_index].is_hashed.assign_cached(
+                region,
+                offset,
+                child_witness.len().scalar(),
+                32.scalar(),
+            )?;
+        }
+
+        // one nibble is used for position in branch
+        *num_nibbles += 1;
+        // Update key parity
+        *is_key_odd = !*is_key_odd;
+
+        // Update the key RLC and multiplier for the branch nibble.
+        let (nibble_mult, mult): (F, F) = if *is_key_odd {
+            // The nibble will be added as the most significant nibble using the same
+            // multiplier
+            (16.scalar(), 1.scalar())
+        } else {
+            // The nibble will be added as the least significant nibble, the multiplier
+            // needs to advance
+            (1.scalar(), mpt_config.r)
+        };
+        let key_rlc_post_branch =
+            *key_rlc + F::from(branch.modified_index as u64) * nibble_mult * *key_mult;
+        let key_rlc_post_drifted =
+            *key_rlc + F::from(branch.drifted_index as u64) * nibble_mult * *key_mult;
+        let key_mult_post_branch = *key_mult * mult;
+
+        // Set the branch we'll take
+        let mut mod_node_hash_rlc = [0.scalar(); 2];
+        for is_s in [true, false] {
+            mod_node_hash_rlc[is_s.idx()] = if is_placeholder[is_s.idx()] {
+                child_witnesses[1 + branch.drifted_index].rlc_branch(mpt_config.r)
+            } else {
+                if is_s {
+                    child_witnesses[1 + branch.modified_index].rlc_branch(mpt_config.r)
+                } else {
+                    child_witnesses[0].rlc_branch(mpt_config.r)
+                }
+            };
+            self.mod_rlc[is_s.idx()].assign_cached(region, offset, mod_node_hash_rlc[is_s.idx()])?;
         }
 
         Ok((
