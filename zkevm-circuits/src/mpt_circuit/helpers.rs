@@ -3,7 +3,7 @@ use std::any::Any;
 use crate::{
     _cb, circuit,
     circuit_tools::{
-        cell_manager::{Cell, CellManager, Trackable},
+        cell_manager::{Cell, CellManager, Trackable, CellType},
         constraint_builder::{
             Conditionable, ConstraintBuilder, RLCChainable, RLCChainableValue, RLCable,
             RLCableValue,
@@ -22,7 +22,8 @@ use crate::{
 use eth_types::Field;
 use gadgets::util::{or, Scalar};
 use halo2_proofs::{
-    circuit::Region,
+    arithmetic::FieldExt,
+    circuit::{AssignedCell, Region, Value},
     plonk::{Error, Expression},
 };
 
@@ -1002,6 +1003,49 @@ pub struct MPTConstraintBuilder<F> {
     pub length_c: Vec<(Expression<F>, Expression<F>)>,
     /// The range to check in s bytes
     pub range_s: Vec<(Expression<F>, Expression<F>)>,
+    /// Store expression over max degree
+    pub stored_expressions: Vec<StoredExpression<F>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StoredExpression<F> {
+    pub(crate) name: String,
+    cell: Cell<F>,
+    cell_type: CellType,
+    expr: Expression<F>,
+    expr_id: String,
+}
+
+impl<F: Field> StoredExpression<F> {
+    pub fn assign(
+        &self,
+        region: &mut CachedRegion<'_, '_, F>,
+        offset: usize,
+    ) -> Result<AssignedCell<F, F>, Error> {
+        let value = self.expr.evaluate(
+            &|scalar| scalar,
+            &|_| unimplemented!("selector column"),
+            &|fixed_query| {
+                region.get_fixed(offset, fixed_query.column_index(), fixed_query.rotation())
+            },
+            &|advide_query| {
+                region.get_advice(offset, advide_query.column_index(), advide_query.rotation())
+            },
+            &|instance_query| {
+                region.get_instance(
+                    offset,
+                    instance_query.column_index(),
+                    instance_query.rotation(),
+                )
+            },
+            &|_| unimplemented!(),
+            &|a| -a,
+            &|a, b| a + b,
+            &|a, b| a * b,
+            &|a, scalar| a * scalar,
+        );
+        self.cell.assign_cached(region, offset, value)
+    }
 }
 
 /// Length is set in the configuration of the rows where unused columns might
@@ -1022,6 +1066,7 @@ impl<F: Field> MPTConstraintBuilder<F> {
             length_sc: 0.expr(),
             length_c: Vec::new(),
             range_s: Vec::new(),
+            stored_expressions: Vec::new(),
         }
     }
 
@@ -1070,6 +1115,127 @@ impl<F: Field> MPTConstraintBuilder<F> {
     pub(crate) fn get_range_s(&self) -> Expression<F> {
         Self::DEFAULT_RANGE.expr() - self.range_s.apply_conditions()
     }
+
+    pub(crate) fn query_cell_with_type(&mut self, cell_type: CellType) -> Cell<F> {
+        self.query_cells(cell_type, 1).first().unwrap().clone()
+    }
+
+    fn query_cells(&mut self, cell_type: CellType, count: usize) -> Vec<Cell<F>> {
+        self.base.cell_manager.clone().unwrap().query_cells(cell_type, count)
+    }
+    
+    // pub(crate) fn add_lookup(&mut self, name: &str, lookup: Lookup<F>) {
+    //     let lookup = match &self.condition {
+    //         Some(condition) => lookup.conditional(condition.clone()),
+    //         None => lookup,
+    //     };
+
+    //     let compressed_expr = self.split_expression(
+    //         "Lookup compression",
+    //         rlc::expr(&lookup.input_exprs(), self.power_of_randomness),
+    //         MAX_DEGREE - IMPLICIT_DEGREE,
+    //     );
+    //     self.store_expression(name, compressed_expr, CellType::Lookup(lookup.table()));
+    // }
+
+    pub(crate) fn store_expression(
+        &mut self,
+        name: &str,
+        expr: Expression<F>,
+        cell_type: CellType,
+    ) -> Expression<F> {
+        // Check if we already stored the expression somewhere
+        let stored_expression = self.find_stored_expression(expr.clone(), cell_type);
+        match stored_expression {
+            Some(stored_expression) => {
+                debug_assert!(
+                    !matches!(cell_type, CellType::Lookup(_)),
+                    "The same lookup is done multiple times",
+                );
+                stored_expression.cell.expr()
+            }
+            None => {
+                // Even if we're building expressions for the next step,
+                // these intermediate values need to be stored in the current step.
+                // let in_next_step = self.in_next_step;
+                // self.in_next_step = false;
+                let cell = self.query_cell_with_type(cell_type);
+                // self.in_next_step = in_next_step;
+
+                // Require the stored value to equal the value of the expression
+                let name = format!("{} (stored expression)", name);
+                self.base.add_constraint(
+                    Box::leak(name.clone().into_boxed_str()),
+                    cell.expr() - expr.clone(),
+                );
+
+                self.stored_expressions.push(StoredExpression {
+                    name,
+                    cell: cell.clone(),
+                    cell_type,
+                    expr_id: expr.identifier(),
+                    expr,
+                });
+                cell.expr()
+            }
+        }
+    }
+
+    pub(crate) fn find_stored_expression(
+        &self,
+        expr: Expression<F>,
+        cell_type: CellType,
+    ) -> Option<&StoredExpression<F>> {
+        let expr_id = expr.identifier();
+        self.stored_expressions
+            .iter()
+            .find(|&e| e.cell_type == cell_type && e.expr_id == expr_id)
+    }
+
+    fn split_expression(
+        &mut self,
+        name: &'static str,
+        expr: Expression<F>,
+        max_degree: usize,
+    ) -> Expression<F> {
+        if expr.degree() > max_degree {
+            match expr {
+                Expression::Negated(poly) => {
+                    Expression::Negated(Box::new(self.split_expression(name, *poly, max_degree)))
+                }
+                Expression::Scaled(poly, v) => {
+                    Expression::Scaled(Box::new(self.split_expression(name, *poly, max_degree)), v)
+                }
+                Expression::Sum(a, b) => {
+                    let a = self.split_expression(name, *a, max_degree);
+                    let b = self.split_expression(name, *b, max_degree);
+                    a + b
+                }
+                Expression::Product(a, b) => {
+                    let (mut a, mut b) = (*a, *b);
+                    while a.degree() + b.degree() > max_degree {
+                        let mut split = |expr: Expression<F>| {
+                            if expr.degree() > max_degree {
+                                self.split_expression(name, expr, max_degree)
+                            } else {
+                                self.store_expression(name, expr, CellType::Storage)
+                            }
+                        };
+                        if a.degree() >= b.degree() {
+                            a = split(a);
+                        } else {
+                            b = split(b);
+                        }
+                    }
+                    a * b
+                }
+                _ => expr.clone(),
+            }
+        } else {
+            expr.clone()
+        }
+    }
+
 }
 
 /// Returns `1` when `value == 0`, and returns `0` otherwise.

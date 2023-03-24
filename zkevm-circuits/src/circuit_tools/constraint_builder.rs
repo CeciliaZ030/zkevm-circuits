@@ -345,6 +345,7 @@ impl<F: Field> ConstraintBuilder<F> {
     pub(crate) fn set_query_offset(&mut self, query_offset: i32) {
         self.query_offset = query_offset;
     }
+
 }
 
 pub(crate) fn merge_lookups<F: Field>(
