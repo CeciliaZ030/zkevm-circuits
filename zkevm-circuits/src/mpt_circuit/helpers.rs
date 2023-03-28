@@ -1005,6 +1005,8 @@ pub struct MPTConstraintBuilder<F> {
     pub range_s: Vec<(Expression<F>, Expression<F>)>,
     /// Store expression over max degree
     pub stored_expressions: Vec<StoredExpression<F>>,
+    /// Store randomness over max degree
+    power_of_randomness: [Expression<F>; 31],
 }
 
 #[derive(Debug, Clone)]
@@ -1123,6 +1125,17 @@ impl<F: Field> MPTConstraintBuilder<F> {
     fn query_cells(&mut self, cell_type: CellType, count: usize) -> Vec<Cell<F>> {
         self.base.cell_manager.clone().unwrap().query_cells(cell_type, count)
     }
+
+    // pub(crate) fn add_constraint(&mut self, name: &'static str, constraint: Expression<F>) {
+    //     let constraint = self.split_expression(
+    //         name,
+    //         constraint * self.condition_expr(),
+    //         MAX_DEGREE - IMPLICIT_DEGREE,
+    //     );
+
+    //     self.validate_degree(constraint.degree(), name);
+    //     self.constraints.push((name, constraint));
+    // }
     
     // pub(crate) fn add_lookup(&mut self, name: &str, lookup: Lookup<F>) {
     //     let lookup = match &self.condition {

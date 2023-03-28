@@ -21,6 +21,7 @@ mod selectors;
 mod start;
 mod storage_leaf;
 mod witness_row;
+mod table;
 
 use columns::MainCols;
 use extension_branch::ExtensionBranchConfig;
