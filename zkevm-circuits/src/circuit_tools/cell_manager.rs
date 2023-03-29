@@ -1,5 +1,5 @@
 //! Cell manager
-use crate::{util::Expr, evm_circuit::param::N_BYTES_ACCOUNT_ADDRESS};
+use crate::{util::Expr};
 use crate::evm_circuit::util::CachedRegion;
 use eth_types::Field;
 use halo2_proofs::{
@@ -8,6 +8,9 @@ use halo2_proofs::{
     poly::Rotation,
 };
 use std::{any::Any, collections::BTreeMap};
+
+pub(crate) const N_BYTE_LOOKUPS: usize = 4;
+
 
 #[derive(Clone)]
 pub(crate) struct DataTransition<F> {
@@ -169,8 +172,6 @@ pub enum Table {
     /// Table type
     Fixed,
     /// Table type
-    Byte,
-    /// Table type
     Keccak,
 }
 
@@ -216,9 +217,13 @@ impl<F: Field> CellManager<F> {
                 expr: cells[c * height].expr(),
             });
         }
-        let LOOKUP_BYTE_COUNT = 4;
-        for i in 0usize..LOOKUP_BYTE_COUNT {
-            columns[i].cell_type = CellType::Lookup(Table::Byte);
+        let mut column_idx = 0;
+
+    
+        for i in 0usize..N_BYTE_LOOKUPS {
+            columns[i].cell_type = CellType::LookupByte;
+            assert_eq!(advice_columns[column_idx].column_type().phase(), 0);
+            column_idx += 1;
         }
 
 
@@ -256,6 +261,9 @@ impl<F: Field> CellManager<F> {
         let mut best_index: Option<usize> = None;
         let mut best_height = self.height;
         for column in self.columns.iter() {
+            if cell_type == CellType::LookupByte {
+                println!("column.cell_type: {:?}, column.index: {:?}, cell_type: {:?}", column.cell_type, column.index, cell_type);
+            }
             if column.cell_type == cell_type && column.height < best_height {
                 best_index = Some(column.index);
                 best_height = column.height;

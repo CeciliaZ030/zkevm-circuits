@@ -1082,6 +1082,7 @@ impl<F: Field> Circuit<F> for MPTCircuit<F> {
         }
 
         config.load_fixed_table(&mut layouter, self.randomness)?;
+        config.load_byte_table(&mut layouter)?;
         config.assign(&mut layouter, &mut witness_rows, self.randomness)?;
 
         let challenges = Challenges::mock(Value::known(self.randomness));
