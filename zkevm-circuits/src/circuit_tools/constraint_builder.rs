@@ -2,11 +2,10 @@
 use crate::{evm_circuit::{util::rlc, table::Lookup}, util::Expr};
 use eth_types::Field;
 use gadgets::util::{and, select, sum, Scalar};
-use halo2_proofs::plonk::{ConstraintSystem, Expression};
+use halo2_proofs::{plonk::{ConstraintSystem, Expression, Column, Fixed}, poly::Rotation};
 use itertools::Itertools;
 
-use super::cell_manager::{Cell, CellManager, CellType, DataTransition, Trackable, Table};
-use crate::mpt_circuit::FixedTableTag;
+use super::cell_manager::{Cell, CellManager, CellType, DataTransition, Trackable};
 
 /// Lookup data
 #[derive(Clone)]
@@ -130,7 +129,7 @@ impl<F: Field> ConstraintBuilder<F> {
     }
 
     pub(crate) fn query_byte(&mut self) -> Cell<F> {
-        self.query_cell_with_type(CellType::Lookup(Table::Byte))
+        self.query_cell_with_type(CellType::LookupByte)
     }
 
     pub(crate) fn query_bytes<const N: usize>(&mut self) -> [Cell<F>; N] {
@@ -138,7 +137,7 @@ impl<F: Field> ConstraintBuilder<F> {
     }
 
     pub(crate) fn query_bytes_dyn(&mut self, count: usize) -> Vec<Cell<F>> {
-        self.query_cells(CellType::Lookup(Table::Byte), count)
+        self.query_cells(CellType::LookupByte, count)
     }
 
     pub(crate) fn query_cell(&mut self) -> Cell<F> {
@@ -175,6 +174,7 @@ impl<F: Field> ConstraintBuilder<F> {
     pub(crate) fn generate_lookups<S: AsRef<str>>(
         &mut self,
         meta: &mut ConstraintSystem<F>,
+        byte_table: [Column<Fixed>; 1],
         lookup_names: &[S], 
         // "keccek", "fixed", "parent_s" ,"parent_c","parent_s", "key_s", "key_c"
     ) {
@@ -182,11 +182,13 @@ impl<F: Field> ConstraintBuilder<F> {
             for column in cm.columns() {
                 match column.cell_type {
                     CellType::Storage => (),
-                    CellType::Lookup(Table::Byte) => self.lookup(
-                        "Lookup byte", 
-                        "fixed", 
-                        vec![FixedTableTag::Range256.expr(), column.expr()]
-                    ),
+                    CellType::LookupByte => {
+                        meta.lookup_any("Byte lookup", |meta| {
+                            let byte_table_expression = meta.query_fixed(byte_table[0], Rotation::cur());
+                            vec![(column.expr(), byte_table_expression)]
+                        });
+                    },
+                    CellType::Lookup( .. ) => ()
                 }
             }
         }

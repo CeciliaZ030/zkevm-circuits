@@ -17,7 +17,7 @@ use crate::{
         rlp_gadgets::{get_ext_odd_nibble, get_terminal_odd_nibble},
     },
     util::Expr,
-    evm_circuit::util::CachedRegion,
+    evm_circuit::util::{CachedRegion, rlc}, bytecode_circuit::param::HASH_WIDTH,
 };
 use eth_types::Field;
 use gadgets::util::{or, Scalar};
@@ -32,7 +32,16 @@ use super::{
         get_ext_odd_nibble_value, RLPListGadget, RLPListWitness, RLPValueGadget, RLPValueWitness,
     },
     FixedTableTag,
+
+    table::Lookup,
 };
+
+// Max degree allowed in all expressions passing through the ConstraintBuilder.
+// It aims to cap `extended_k` to 2, which allows constraint degree to 2^2+1,
+// but each ExecutionGadget has implicit selector degree 3, so here it only
+// allows 2^2+1-3 = 2.
+const MAX_DEGREE: usize = 5;
+const IMPLICIT_DEGREE: usize = 3;
 
 /// Indexable object
 pub trait Indexable {
@@ -1006,7 +1015,7 @@ pub struct MPTConstraintBuilder<F> {
     /// Store expression over max degree
     pub stored_expressions: Vec<StoredExpression<F>>,
     /// Store randomness over max degree
-    power_of_randomness: [Expression<F>; 31],
+    power_of_randomness: [Expression<F>; HASH_WIDTH],
 }
 
 #[derive(Debug, Clone)]
@@ -1061,7 +1070,11 @@ impl<F: Field> MPTConstraintBuilder<F> {
     const NUM_BYTES_SKIP: usize = 2; // RLP bytes never need to be zero checked
     const DEFAULT_RANGE: FixedTableTag = FixedTableTag::RangeKeyLen256;
 
-    pub(crate) fn new(max_degree: usize, cell_manager: Option<CellManager<F>>) -> Self {
+    pub(crate) fn new(
+        max_degree: usize, 
+        cell_manager: Option<CellManager<F>>,
+        power_of_randomness: [Expression<F>; HASH_WIDTH],
+    ) -> Self {
         MPTConstraintBuilder {
             base: ConstraintBuilder::new(max_degree, cell_manager),
             length_s: Vec::new(),
@@ -1069,6 +1082,7 @@ impl<F: Field> MPTConstraintBuilder<F> {
             length_c: Vec::new(),
             range_s: Vec::new(),
             stored_expressions: Vec::new(),
+            power_of_randomness
         }
     }
 
@@ -1126,30 +1140,42 @@ impl<F: Field> MPTConstraintBuilder<F> {
         self.base.cell_manager.clone().unwrap().query_cells(cell_type, count)
     }
 
-    // pub(crate) fn add_constraint(&mut self, name: &'static str, constraint: Expression<F>) {
-    //     let constraint = self.split_expression(
-    //         name,
-    //         constraint * self.condition_expr(),
-    //         MAX_DEGREE - IMPLICIT_DEGREE,
-    //     );
+    pub(crate) fn add_constraint(&mut self, name: &'static str, constraint: Expression<F>) {
+        let constraint = self.split_expression(
+            name,
+            constraint * self.base.get_condition_expr(),
+            MAX_DEGREE - IMPLICIT_DEGREE,
+        );
 
-    //     self.validate_degree(constraint.degree(), name);
-    //     self.constraints.push((name, constraint));
-    // }
+        self.validate_degree(constraint.degree(), name);
+        self.base.add_constraint(name, constraint);
+    }
+
+    pub(crate) fn validate_degree(&self, degree: usize, name: &'static str) {
+        // We need to subtract IMPLICIT_DEGREE from MAX_DEGREE because all expressions
+        // will be multiplied by state selector and q_step/q_step_first
+        // selector.
+        debug_assert!(
+            degree <= MAX_DEGREE - IMPLICIT_DEGREE,
+            "Expression {} degree too high: {} > {}",
+            name,
+            degree,
+            MAX_DEGREE - IMPLICIT_DEGREE,
+        );
+    }
     
-    // pub(crate) fn add_lookup(&mut self, name: &str, lookup: Lookup<F>) {
-    //     let lookup = match &self.condition {
-    //         Some(condition) => lookup.conditional(condition.clone()),
-    //         None => lookup,
-    //     };
-
-    //     let compressed_expr = self.split_expression(
-    //         "Lookup compression",
-    //         rlc::expr(&lookup.input_exprs(), self.power_of_randomness),
-    //         MAX_DEGREE - IMPLICIT_DEGREE,
-    //     );
-    //     self.store_expression(name, compressed_expr, CellType::Lookup(lookup.table()));
-    // }
+    pub(crate) fn add_lookup(&mut self, name: &str, lookup: Lookup<F>) {
+        let lookup = match self.base.get_condition() {
+            Some(condition) => lookup.conditional(condition),
+            None => lookup,
+        };
+        let compressed_expr = self.split_expression(
+            "Lookup compression",
+            rlc::expr(&lookup.input_exprs(), &self.power_of_randomness),
+            MAX_DEGREE - IMPLICIT_DEGREE,
+        );
+        self.store_expression(name, compressed_expr, CellType::Lookup(lookup.table()));
+    }
 
     pub(crate) fn store_expression(
         &mut self,
@@ -1248,6 +1274,7 @@ impl<F: Field> MPTConstraintBuilder<F> {
             expr.clone()
         }
     }
+
 
 }
 

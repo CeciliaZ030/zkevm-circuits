@@ -1,6 +1,6 @@
 //! The MPT circuit implementation.
 use eth_types::Field;
-use gadgets::{impl_expr, util::Scalar, is_zero::IsZeroConfig};
+use gadgets::{impl_expr, util::Scalar};
 use halo2_proofs::{
     circuit::{Layouter, SimpleFloorPlanner, Value},
     plonk::{Advice, Circuit, Column, ConstraintSystem, Error, Expression, Fixed, VirtualCells},
@@ -44,12 +44,12 @@ use self::{
         AccountNode, AccountRowType, BranchNode, ExtensionBranchNode, ExtensionBranchRowType,
         ExtensionNode, Node, StartNode, StartRowType, StorageNode, StorageRowType,
     },
+    table::*,
 };
 use crate::{mpt_circuit::helpers::Indexable, evm_circuit::util::CachedRegion};
 use crate::{
-    evm_circuit::util::math_gadget::IsZeroGadget,
     assign, assignf, circuit,
-    circuit_tools::{cell_manager::CellManager, constraint_builder::merge_lookups, memory::Memory},
+    circuit_tools::{cell_manager::CellManager, memory::Memory},
     matchr, matchw,
     mpt_circuit::{
         helpers::{extend_rand, main_memory, parent_memory, MPTConstraintBuilder},
@@ -110,6 +110,7 @@ pub struct MPTConfig<F> {
 
     keccak_table: KeccakTable,
     fixed_table: [Column<Fixed>; 5],
+    byte_table: [Column<Fixed>; 1],
     state_machine: StateMachineConfig<F>,
 
     pub(crate) q_node: Column<Advice>,
@@ -125,37 +126,6 @@ pub struct MPTConfig<F> {
     cb: MPTConstraintBuilder<F>,
 }
 
-/// Enumerator to determine the type of row in the fixed table.
-#[derive(Clone, Copy, Debug)]
-pub enum FixedTableTag {
-    /// All zero lookup data
-    Disabled,
-    /// Power of randomness: [1, r], [2, r^2],...
-    RMult,
-    /// 0 - 15
-    Range16,
-    /// 0 - 255
-    Range256,
-    /// For checking there are 0s after the RLP stream ends
-    RangeKeyLen256,
-    /// For checking there are 0s after the RLP stream ends
-    RangeKeyLen16,
-    /// For checking RLP
-    RLP,
-    /// For distinguishing odd key part in extension
-    ExtOddKey,
-    /// State transition steps constriants
-    /// 2
-    StartNode,
-    /// 21
-    BranchNode,
-    /// 12
-    AccountNode,
-    /// 6
-    StorageNode
-}
-
-impl_expr!(FixedTableTag);
 
 #[derive(Default)]
 pub(crate) struct MPTState<F> {
@@ -199,6 +169,7 @@ impl<F: Field> MPTConfig<F> {
             .collect::<Vec<_>>()
             .try_into()
             .unwrap();
+        let byte_table = [meta.fixed_column()];
 
         let managed_columns = (0..20).map(|_| meta.advice_column()).collect::<Vec<_>>();
         let memory_columns = (0..5).map(|_| meta.advice_column()).collect::<Vec<_>>();
@@ -210,7 +181,7 @@ impl<F: Field> MPTConfig<F> {
         memory.allocate(meta, parent_memory(true));
         memory.allocate(meta, main_memory());
 
-        let mut cb = MPTConstraintBuilder::new(33 + 10, None);
+        let mut cb = MPTConstraintBuilder::new(33 + 10, None, power_of_randomness.clone());
 
         let mut ctx = MPTContext {
             q_enable: q_enable.clone(),
@@ -309,6 +280,7 @@ impl<F: Field> MPTConfig<F> {
 
             cb.base.generate_constraints()
         });
+    
 
         let disable_lookups: usize = var("DISABLE_LOOKUPS")
             .unwrap_or_else(|_| "0".to_string())
@@ -318,25 +290,26 @@ impl<F: Field> MPTConfig<F> {
         if disable_lookups == 0 {
             cb.base.generate_lookups(
                 meta,
+                byte_table,
                 &[
-                    vec!["fixed".to_string(), "keccak".to_string(), "bytes".to_string()],
+                    vec!["fixed".to_string(), "keccak".to_string()],
                     ctx.memory.tags(),
                 ]
                 .concat(),
             );
         } else if disable_lookups == 1 {
-            // let cm = cb.base.cell_manager?;
             cb.base.generate_lookups(
                 meta,
+                byte_table,
                 &[vec!["keccak".to_string()], ctx.memory.tags()].concat(),
             );
         } else if disable_lookups == 2 {
-            cb.base.generate_lookups(meta, &ctx.memory.tags());
+            cb.base.generate_lookups(meta, byte_table,&ctx.memory.tags());
         } else if disable_lookups == 3 {
             cb.base
-                .generate_lookups(meta, &vec!["fixed".to_string(), "keccak".to_string()]);
+                .generate_lookups(meta, byte_table,&vec!["fixed".to_string(), "keccak".to_string()]);
         } else if disable_lookups == 4 {
-            cb.base.generate_lookups(meta, &vec!["fixed".to_string()]);
+            cb.base.generate_lookups(meta, byte_table,&vec!["fixed".to_string()]);
         }
 
         println!("num lookups: {}", meta.lookups().len());
@@ -358,6 +331,7 @@ impl<F: Field> MPTConfig<F> {
             managed_columns,
             memory,
             keccak_table,
+            byte_table,
             fixed_table,
             state_machine,
             r: 0.scalar(),
@@ -1044,6 +1018,25 @@ impl<F: Field> MPTConfig<F> {
                     offset += 1;
                 }
                 
+                Ok(())
+            },
+        )
+    }
+
+    /// load_byte_table loads the byte table into the circuit
+    pub fn load_byte_table(&self, layouter: &mut impl Layouter<F>) -> Result<(), Error> {
+        layouter.assign_region(
+            || "byte table",
+            |mut region| {
+                for offset in 0..256 {
+                    region.assign_fixed(
+                        || "",
+                        self.byte_table[0],
+                        offset,
+                        || Value::known(F::from(offset as u64)),
+                    )?;
+                }
+
                 Ok(())
             },
         )

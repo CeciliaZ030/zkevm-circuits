@@ -158,6 +158,8 @@ pub enum CellType {
     /// Storage type
     Storage,
     /// Lookup Byte
+    LookupByte,
+    /// Lookup outter tables
     Lookup(Table), 
 }
 
@@ -165,7 +167,11 @@ pub enum CellType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Table {
     /// Table type
+    Fixed,
+    /// Table type
     Byte,
+    /// Table type
+    Keccak,
 }
 
 /// CellColumn

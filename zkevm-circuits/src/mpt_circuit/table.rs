@@ -1,8 +1,9 @@
 use eth_types::Field;
 use gadgets::util::Expr;
 use halo2_proofs::plonk::Expression;
-use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
+use gadgets::{impl_expr, util::Scalar};
+use crate::circuit_tools::cell_manager::Table;
 
 #[derive(Clone, Copy, Debug)]
 pub enum FixedTableTag {
@@ -32,12 +33,8 @@ pub enum FixedTableTag {
     /// 6
     StorageNode
 }
+impl_expr!(FixedTableTag);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, EnumIter)]
-pub(crate) enum Table {
-    Fixed,
-    Byte,
-}
 
 #[derive(Clone, Debug)]
 pub(crate) enum Lookup<F> {
@@ -50,10 +47,15 @@ pub(crate) enum Lookup<F> {
         values: [Expression<F>; 5],
     },
 
-    /// Lookup to byte value.
-    Byte {
-        /// Value of the field.
-        value: Expression<F>,
+    /// Lookup to keccak table.
+    KeccakTable {
+        /// Accumulator to the input.
+        input_rlc: Expression<F>,
+        /// Length of input that is being hashed.
+        input_len: Expression<F>,
+        /// Output (hash) until this state. This is the RLC representation of
+        /// the final output keccak256 hash of the input.
+        output_rlc: Expression<F>,
     },
 
     /// Conditional lookup enabled by the first element.
@@ -68,7 +70,7 @@ impl<F: Field> Lookup<F> {
     pub(crate) fn table(&self) -> Table {
         match self {
             Self::Fixed { .. } => Table::Fixed,
-            Self::Byte { .. } => Table::Byte,
+            Self::KeccakTable {.. } => Table::Keccak,
             Self::Conditional(_, lookup) => lookup.table(),
         }
     }
@@ -76,7 +78,16 @@ impl<F: Field> Lookup<F> {
     pub(crate) fn input_exprs(&self) -> Vec<Expression<F>> {
         match self {
             Self::Fixed { tag, values } => [vec![tag.clone()], values.to_vec()].concat(),
-            Self::Byte { value } => vec![value.clone()],
+            Self::KeccakTable {
+                input_rlc,
+                input_len,
+                output_rlc,
+            } => vec![
+                1.expr(), // is_enabled
+                input_rlc.clone(),
+                input_len.clone(),
+                output_rlc.clone(),
+            ],
             Self::Conditional(condition, lookup) => lookup
                 .input_exprs()
                 .into_iter()
