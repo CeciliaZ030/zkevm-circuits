@@ -7,6 +7,7 @@ use halo2_proofs::{
     plonk::{Advice, Column, Error, Expression, VirtualCells},
     poly::Rotation,
 };
+use lazy_static::__Deref;
 use std::collections::HashMap;
 use std::cmp::{max, Ordering};
 use std::{any::Any, collections::BTreeMap};
@@ -228,34 +229,65 @@ pub struct CellManager_<F> {
 
 
 #[derive(Default, Clone, Debug)]
-struct CmContext<F>(Vec<CellColumn<F>>);
+struct CmContext<F>{
+    parent: Box<Option<CmContext<F>>>,
+    columns: Vec<CellColumn<F>>,
+}
 
 impl<F: Field>  CellManager_<F> {
     
     pub(crate) fn cur_to_parent(&mut self) {
-        assert!(self.parent_ctx.is_none(), "CellManager has existing parent context");
-        self.parent_ctx = Some(CmContext(self.columns.clone()));
+        let new_parent = match self.parent_ctx.clone() {
+            // if parent context exists, meaning we are deep in a callstack
+            // we set it as the parent of new parent
+            Some(ctx) => CmContext {
+                parent: Box::new(Some(ctx.clone())),
+                columns: self.columns.clone(),
+            },
+            // otherwise, this is the fist level of callstack
+            // the parent of new parent is None
+            None => CmContext {
+                parent: Box::new(None),
+                columns: self.columns.clone(),
+            }
+        };
+        self.parent_ctx = Some(new_parent);
         self.reset();
     }
 
     pub(crate) fn cur_to_branch(&mut self, name: &str) {
-        self.branch_ctxs.insert(
-                name.to_string(), 
-                CmContext(self.columns.clone()),
-        );
+        let new_branch = match self.parent_ctx.clone() {
+            // if parent context exists, meaning we are deep in a callstack
+            // we set it as the parent of new branch
+            Some(ctx) => CmContext {
+                parent: Box::new(Some(ctx.clone())),
+                columns: self.columns.clone(),
+            },
+            // otherwise, this is the fist level of callstack
+            // the parent of new branch is None
+            None => CmContext {
+                parent: Box::new(None),
+                columns: self.columns.clone(),
+            }
+        };
+        self.branch_ctxs.insert(name.to_string(), new_branch);
         self.reset();
     }
 
     pub(crate) fn recover_parent(&mut self) {
         assert!(self.parent_ctx.is_some(), "No parent context to recover");
-        self.columns = self.parent_ctx.clone().unwrap().0;
-        self.parent_ctx = None;
+        self.columns = self.parent_ctx.clone().unwrap().columns.clone();
+        self.parent_ctx
+            .clone()
+            .map(|ctx| self.parent_ctx = ctx.parent.deref().clone())
+            .unwrap();
+        self.branch_ctxs.clear();
     }
 
     pub(crate) fn recover_branch(&mut self, name: &str) {
-        self.branch_ctxs.get(name).and_then(|ctx| {
-            self.columns = ctx.0.clone();
-            Some(())
+        self.branch_ctxs.get(name).map(|ctx| {
+            assert!(ctx.parent.is_some(), "Cannot have sibling without parent");
+            self.columns = ctx.columns.clone();
         }).expect("CellManager has no specified context.");
         self.branch_ctxs.remove(name);
     }
@@ -267,13 +299,16 @@ impl<F: Field>  CellManager_<F> {
             .iter()
             .map(|(name, ctx)| {
                 for c in 0..self.width {
-                    new_cols[c] = max(&new_cols[c], &ctx.0[c]).clone();
-                    new_cols[c] = max(&new_cols[c], &parent.0[c]).clone();
+                    new_cols[c] = max(&new_cols[c], &ctx.columns[c]).clone();
+                    new_cols[c] = max(&new_cols[c], &parent.columns[c]).clone();
                 }
             });
         self.columns = new_cols;
         self.branch_ctxs.clear();
-        self.parent_ctx = None;
+        self.parent_ctx = self.parent_ctx
+            .clone()
+            .map(|ctx| ctx.parent.deref().clone())
+            .unwrap();
     }
 
     pub(crate) fn new(meta: &mut VirtualCells<F>, advice_columns: &[Column<Advice>]) -> Self {
@@ -339,9 +374,9 @@ impl<F: Field>  CellManager_<F> {
         let mut best_index: Option<usize> = None;
         let mut best_height = self.height;
         for column in self.columns.iter() {
-            if cell_type == CellType::LookupByte {
-                println!("column.cell_type: {:?}, column.index: {:?}, cell_type: {:?}", column.cell_type, column.index, cell_type);
-            }
+            // if cell_type == CellType::LookupByte {
+            //     println!("column.cell_type: {:?}, column.index: {:?}, cell_type: {:?}", column.cell_type, column.index, cell_type);
+            // }
             if column.cell_type == cell_type && column.height < best_height {
                 best_index = Some(column.index);
                 best_height = column.height;

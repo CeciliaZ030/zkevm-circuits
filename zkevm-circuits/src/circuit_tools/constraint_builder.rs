@@ -53,6 +53,7 @@ impl<F: Field> ConstraintBuilder<F> {
     }
 
     pub(crate) fn set_cell_manager(&mut self, cell_manager: CellManager_<F>) {
+        println!("set_cell_manager");
         self.cell_manager = Some(cell_manager);
     }
 
@@ -1056,13 +1057,15 @@ macro_rules! _matchx {
 #[macro_export]
 macro_rules! _ifx {
     ($cb:expr, $($condition:expr),* => $when_true:block $(elsex $when_false:block)?)  => {{
+        
+        let description = stringify!(ifx!($($condition)*));
         let condition = and::expr([$($condition.expr()),*]);
 
-        // $cb.enter_branch_context();
+        $cb.enter_branch_context();
         $cb.push_condition(condition.expr());
         let ret_true = $when_true;
         $cb.pop_condition();
-        // $cb.switch_branch_context(condition.expr());
+        $cb.switch_branch_context(description);
 
         #[allow(unused_assignments, unused_mut)]
         let mut ret = ret_true.conditional(condition.expr());
@@ -1073,9 +1076,13 @@ macro_rules! _ifx {
             $cb.push_condition(not::expr(condition.expr()));
             let ret_false = $when_false;
             $cb.pop_condition();
+            $cb.switch_branch_context(stringify!(
+                crate::concat_with_preamble!("not ",description);
+            ));
 
             ret = ret_true.select(condition.expr(), &ret_false);
         )*
+        $cb.exit_branch_context();
         ret
     }};
 }
