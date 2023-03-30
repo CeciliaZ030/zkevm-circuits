@@ -3,7 +3,7 @@ use std::any::Any;
 use crate::{
     _cb, circuit,
     circuit_tools::{
-        cell_manager::{Cell, CellManager, Trackable, CellType},
+        cell_manager::{Cell, CellManager_, Trackable, CellType},
         constraint_builder::{
             Conditionable, ConstraintBuilder, RLCChainable, RLCChainableValue, RLCable,
             RLCableValue,
@@ -1072,7 +1072,7 @@ impl<F: Field> MPTConstraintBuilder<F> {
 
     pub(crate) fn new(
         max_degree: usize, 
-        cell_manager: Option<CellManager<F>>,
+        cell_manager: Option<CellManager_<F>>,
         power_of_randomness: [Expression<F>; HASH_WIDTH],
     ) -> Self {
         MPTConstraintBuilder {

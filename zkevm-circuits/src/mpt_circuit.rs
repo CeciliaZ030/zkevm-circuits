@@ -49,7 +49,7 @@ use self::{
 use crate::{mpt_circuit::helpers::Indexable, evm_circuit::util::CachedRegion};
 use crate::{
     assign, assignf, circuit,
-    circuit_tools::{cell_manager::CellManager, memory::Memory},
+    circuit_tools::{cell_manager::CellManager_, memory::Memory},
     matchr, matchw,
     mpt_circuit::{
         helpers::{extend_rand, main_memory, parent_memory, MPTConstraintBuilder},
@@ -202,7 +202,7 @@ impl<F: Field> MPTConfig<F> {
 
         meta.create_gate("MPT", |meta| {
             // 20 cols * 32 height in CellManager
-            let cell_manager = CellManager::new(meta, &ctx.managed_columns);
+            let cell_manager = CellManager_::new(meta, &ctx.managed_columns);
             cb.base.set_cell_manager(cell_manager);
             
             circuit!([meta, cb.base], {
@@ -351,6 +351,7 @@ impl<F: Field> MPTConfig<F> {
         let mut height = 0;
         let mut memory = self.memory.clone();
 
+        // 预处理一☝️：把每行的rlp bytes搞一下
         // TODO(Brecht): change this on the witness generation side
         let mut key_rlp_bytes = Vec::new();
         for (_, row) in witness
@@ -575,6 +576,7 @@ impl<F: Field> MPTConfig<F> {
             }
         }
 
+        // 预处理二☝️：把记录变化的branch index放前面
         // TODO(Brecht): change this on the witness generation side
         let cached_witness = witness.to_owned();
         for (idx, row) in witness
@@ -589,6 +591,8 @@ impl<F: Field> MPTConfig<F> {
             }
         }
 
+        // 构造 nodes
+        // N1=[r0,r1] | N2=[r2,...,r23] | ...
         let mut nodes = Vec::new();
         let witness = witness
             .iter()

@@ -5,7 +5,7 @@ use gadgets::util::{and, select, sum, Scalar};
 use halo2_proofs::{plonk::{ConstraintSystem, Expression, Column, Fixed}, poly::Rotation};
 use itertools::Itertools;
 
-use super::cell_manager::{Cell, CellManager, CellType, DataTransition, Trackable};
+use super::cell_manager::{Cell, CellManager_, CellType, DataTransition, Trackable};
 
 /// Lookup data
 #[derive(Clone)]
@@ -32,14 +32,14 @@ pub struct ConstraintBuilder<F> {
     pub lookup_tables: Vec<LookupData<F>>,
     /// Query offset
     pub query_offset: i32,
-    /// CellManager
-    pub cell_manager: Option<CellManager<F>>,
+    /// CellManager_
+    pub cell_manager: Option<CellManager_<F>>,
     /// Tracked objects
     objects: Vec<Box<dyn Trackable>>,
 }
 
 impl<F: Field> ConstraintBuilder<F> {
-    pub(crate) fn new(max_degree: usize, cell_manager: Option<CellManager<F>>) -> Self {
+    pub(crate) fn new(max_degree: usize, cell_manager: Option<CellManager_<F>>) -> Self {
         ConstraintBuilder {
             constraints: Vec::new(),
             max_degree,
@@ -52,8 +52,20 @@ impl<F: Field> ConstraintBuilder<F> {
         }
     }
 
-    pub(crate) fn set_cell_manager(&mut self, cell_manager: CellManager<F>) {
+    pub(crate) fn set_cell_manager(&mut self, cell_manager: CellManager_<F>) {
         self.cell_manager = Some(cell_manager);
+    }
+
+    pub(crate) fn enter_branch_context(&mut self) {
+        self.cell_manager.as_mut().unwrap().cur_to_parent();
+    }
+
+    pub(crate) fn switch_branch_context(&mut self, branch_name: &str) {
+        self.cell_manager.as_mut().unwrap().cur_to_branch(branch_name);
+    }
+
+    pub(crate) fn exit_branch_context(&mut self) {
+        self.cell_manager.as_mut().unwrap().recover_max_branch();
     }
 
     pub(crate) fn require_zero(&mut self, name: &'static str, constraint: Expression<F>) {
@@ -1046,9 +1058,11 @@ macro_rules! _ifx {
     ($cb:expr, $($condition:expr),* => $when_true:block $(elsex $when_false:block)?)  => {{
         let condition = and::expr([$($condition.expr()),*]);
 
+        // $cb.enter_branch_context();
         $cb.push_condition(condition.expr());
         let ret_true = $when_true;
         $cb.pop_condition();
+        // $cb.switch_branch_context(condition.expr());
 
         #[allow(unused_assignments, unused_mut)]
         let mut ret = ret_true.conditional(condition.expr());
