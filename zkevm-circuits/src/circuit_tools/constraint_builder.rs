@@ -58,15 +58,26 @@ impl<F: Field> ConstraintBuilder<F> {
     }
 
     pub(crate) fn enter_branch_context(&mut self) {
-        self.cell_manager.as_mut().unwrap().cur_to_parent();
+        println!("=====>");
+        match self.cell_manager.as_mut() {
+            Some(cm) => cm.cur_to_parent(),
+            None => ()
+        };   
     }
 
     pub(crate) fn switch_branch_context(&mut self, branch_name: &str) {
-        self.cell_manager.as_mut().unwrap().cur_to_branch(branch_name);
+        match self.cell_manager.as_mut() {
+            Some(cm) => cm.cur_to_branch(branch_name),
+            None => ()
+        }; 
     }
 
     pub(crate) fn exit_branch_context(&mut self) {
-        self.cell_manager.as_mut().unwrap().recover_max_branch();
+        println!("^*****");
+        match self.cell_manager.as_mut() {
+            Some(cm) => cm.recover_max_branch(),
+            None => ()
+        }; 
     }
 
     pub(crate) fn require_zero(&mut self, name: &'static str, constraint: Expression<F>) {
@@ -1025,10 +1036,17 @@ macro_rules! _matchx {
     ($cb:expr, $($condition:expr => $when:expr),* $(, _ => $catch_all:expr)? $(,)?)  => {{
         let mut conditions = Vec::new();
         let mut cases = Vec::new();
+        $cb.enter_branch_context();
+        println!("$cb.enter_branch_context -- _matchx");
+
         $(
             $cb.push_condition($condition.expr());
             let ret = $when.clone();
             $cb.pop_condition();
+
+            println!("$cb.switch_branch_context: {:?}", stringify!($condition));
+            $cb.switch_branch_context(stringify!($condition));
+
             cases.push(($condition.expr(), ret));
             conditions.push($condition.expr());
         )*
@@ -1038,6 +1056,10 @@ macro_rules! _matchx {
             $cb.push_condition(catch_all_condition.expr());
             let ret = $catch_all;
             $cb.pop_condition();
+
+            println!("$cb.switch_branch_context: catch_all_condition");
+            $cb.switch_branch_context("catch_all_condition");
+
             cases.push((catch_all_condition.expr(), ret));
             conditions.push(catch_all_condition.expr());
         )*
@@ -1049,6 +1071,9 @@ macro_rules! _matchx {
         // Exactly 1 case needs to be enabled
         _require!($cb, sum::expr(&conditions) => 1);
 
+        println!("$cb.exit_branch_context -- _matchx");
+        $cb.exit_branch_context();
+        
         cases.apply_conditions()
     }};
 }
@@ -1058,14 +1083,18 @@ macro_rules! _matchx {
 macro_rules! _ifx {
     ($cb:expr, $($condition:expr),* => $when_true:block $(elsex $when_false:block)?)  => {{
         
-        let description = stringify!(ifx!($($condition)*));
+        let descr = stringify!($($condition)*);
         let condition = and::expr([$($condition.expr()),*]);
 
         $cb.enter_branch_context();
+        println!("$cb.enter_branch_context");
+
         $cb.push_condition(condition.expr());
         let ret_true = $when_true;
         $cb.pop_condition();
-        $cb.switch_branch_context(description);
+    
+        println!("$cb.switch_branch_context: {:?}{:?}", "ifx!", descr);
+        $cb.switch_branch_context(&format!("{:?}{:?}", "ifx!", descr));
 
         #[allow(unused_assignments, unused_mut)]
         let mut ret = ret_true.conditional(condition.expr());
@@ -1076,12 +1105,13 @@ macro_rules! _ifx {
             $cb.push_condition(not::expr(condition.expr()));
             let ret_false = $when_false;
             $cb.pop_condition();
-            $cb.switch_branch_context(stringify!(
-                crate::concat_with_preamble!("not ",description);
-            ));
+
+            println!("$cb.switch_branch_context: {:?}{:?}", "elsex", descr);
+            $cb.switch_branch_context(&format!("{:?}{:?}", "elsex", descr));
 
             ret = ret_true.select(condition.expr(), &ret_false);
         )*
+        println!("$cb.exit_branch_context");
         $cb.exit_branch_context();
         ret
     }};

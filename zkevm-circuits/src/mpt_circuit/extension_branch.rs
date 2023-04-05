@@ -40,7 +40,6 @@ impl<F: Field> ExtensionBranchConfig<F> {
     ) -> Self {
         cb.base.cell_manager.as_mut().unwrap().reset();
         let mut config = ExtensionBranchConfig::default();
-
         circuit!([meta, cb.base], {
             let q_enable = f!(ctx.q_enable);
             // General inputs
@@ -67,6 +66,8 @@ impl<F: Field> ExtensionBranchConfig<F> {
                 require!(config.parent_data[is_s.idx()].is_placeholder => false);
             }
 
+            
+            // let cm1, cm2 = cm
             // Extension
             let (
                 num_nibbles,
@@ -78,6 +79,7 @@ impl<F: Field> ExtensionBranchConfig<F> {
                 parent_rlc_s,
                 parent_rlc_c,
             ) = ifx! {config.is_extension => {
+                //用 cm1
                 config.extension = ExtensionGadget::configure(
                     meta,
                     cb,
@@ -98,6 +100,7 @@ impl<F: Field> ExtensionBranchConfig<F> {
                     ext.branch_rlp_rlc[false.idx()].expr(),
                 )
             } elsex {
+                // 用 cm2
                 (
                     config.key_data.num_nibbles.expr(),
                     config.key_data.is_odd.expr(),
@@ -109,6 +112,7 @@ impl<F: Field> ExtensionBranchConfig<F> {
                     config.parent_data[false.idx()].rlc.expr(),
                 )
             }};
+            // cm = 实质上采取的 cmi
             let parent_rlc = [parent_rlc_s, parent_rlc_c];
             let is_root = [is_root_s, is_root_c];
 
