@@ -1,11 +1,14 @@
 //! Circuit utilities
-use crate::{evm_circuit::{util::rlc, table::Lookup}, util::Expr};
+use crate::{evm_circuit::{util::{rlc, CachedRegion}, table::Lookup}, util::Expr, bytecode_circuit::param::HASH_WIDTH};
 use eth_types::Field;
 use gadgets::util::{and, select, sum, Scalar};
-use halo2_proofs::{plonk::{ConstraintSystem, Expression, Column, Fixed}, poly::Rotation};
+use halo2_proofs::{
+    plonk::{ConstraintSystem, Expression, Column, Fixed, Error}, 
+    poly::Rotation, circuit::AssignedCell
+};
 use itertools::Itertools;
 
-use super::cell_manager::{Cell, CellManager_, CellType, DataTransition, Trackable};
+use super::cell_manager::{Cell, CellManager_, CellType, DataTransition, Trackable, Table};
 
 /// Lookup data
 #[derive(Clone)]
@@ -26,17 +29,71 @@ pub struct ConstraintBuilder<F> {
     constraints: Vec<(&'static str, Expression<F>)>,
     max_degree: usize,
     conditions: Vec<Expression<F>>,
+
     /// The lookups
+    /// 需要查的数据（descr，tag, condition: Expression<F>, values: Vec<Expression<F>>）
+    /// 在memory load_with_key 里面调，load 的 Vec<LookupData<F>> 是 lookup 这个行为
     pub lookups: Vec<LookupData<F>>,
     /// The lookup tables
+    /// 在memory store_with_key 里面调，store 的 Vec<LookupData<F>> 是形成这张表
     pub lookup_tables: Vec<LookupData<F>>,
+
     /// Query offset
     pub query_offset: i32,
     /// CellManager_
     pub cell_manager: Option<CellManager_<F>>,
     /// Tracked objects
     objects: Vec<Box<dyn Trackable>>,
+
+    /// Store expression over max degree
+    pub stored_expressions: Vec<StoredExpression<F>>,
+    /// Store randomness over max degree
+    power_of_randomness: Option<[Expression<F>; HASH_WIDTH]>,
 }
+
+/// Stored expression for lookup
+#[derive(Debug, Clone)]
+pub struct StoredExpression<F> {
+    pub(crate) name: String,
+    cell: Cell<F>,
+    cell_type: CellType,
+    expr: Expression<F>,
+    expr_id: String,
+}
+
+impl<F: Field> StoredExpression<F> {
+    /// Assign cell with lookup expression 
+    pub fn assign(
+        &self,
+        region: &mut CachedRegion<'_, '_, F>,
+        offset: usize,
+    ) -> Result<AssignedCell<F, F>, Error> {
+        let value = self.expr.evaluate(
+            &|scalar| scalar,
+            &|_| unimplemented!("selector column"),
+            &|fixed_query| {
+                region.get_fixed(offset, fixed_query.column_index(), fixed_query.rotation())
+            },
+            &|advide_query| {
+                region.get_advice(offset, advide_query.column_index(), advide_query.rotation())
+            },
+            &|instance_query| {
+                region.get_instance(
+                    offset,
+                    instance_query.column_index(),
+                    instance_query.rotation(),
+                )
+            },
+            &|_| unimplemented!(),
+            &|a| -a,
+            &|a, b| a + b,
+            &|a, b| a * b,
+            &|a, scalar| a * scalar,
+        );
+        self.cell.assign_cached(region, offset, value)
+    }
+}
+
 
 impl<F: Field> ConstraintBuilder<F> {
     pub(crate) fn new(max_degree: usize, cell_manager: Option<CellManager_<F>>) -> Self {
@@ -49,6 +106,9 @@ impl<F: Field> ConstraintBuilder<F> {
             query_offset: 0,
             cell_manager,
             objects: Vec::new(),
+
+            stored_expressions: Vec::new(),
+            power_of_randomness: None,
         }
     }
 
@@ -56,6 +116,11 @@ impl<F: Field> ConstraintBuilder<F> {
         println!("set_cell_manager");
         self.cell_manager = Some(cell_manager);
     }
+
+    pub(crate) fn set_power_of_randomness(&mut self, power_of_randomness: [Expression<F>; HASH_WIDTH]) {
+        self.power_of_randomness = Some(power_of_randomness);
+    }
+
 
     pub(crate) fn enter_branch_context(&mut self) {
         println!("=====>");
@@ -266,6 +331,8 @@ impl<F: Field> ConstraintBuilder<F> {
         tag: S,
         values: Vec<Expression<F>>,
     ) {
+        // 上层：在 memory里面调 cb.lookup_table("memory store", self.tag(), key_and_values);
+        // 存：
         let condition = self.get_condition_expr();
         self.lookup_tables.push(LookupData {
             description,
@@ -273,7 +340,127 @@ impl<F: Field> ConstraintBuilder<F> {
             condition,
             values,
         });
+        // 用：
     }
+
+    pub(crate) fn add_lookup_rlc(&mut self, name: &str, lookup: Vec<Expression<F>>, table_type: Table) {
+        if let Some(power_of_randomness) = self.power_of_randomness.as_ref() {
+            let lookup = match self.get_condition() {
+                Some(condition) => lookup.into_iter()
+                    .map(|expr| condition.clone() * expr)
+                    .collect(),
+                None => lookup,
+            };
+            let compressed_expr = self.split_expression(
+                "Lookup compression",
+                rlc::expr(&lookup, power_of_randomness),
+                self.max_degree,
+            );
+            self.store_expression(name, compressed_expr, CellType::Lookup(table_type));
+        } else {
+            panic!("Can's lookup with rlc without randomness");
+        }
+    }
+
+    pub(crate) fn store_expression(
+        &mut self,
+        name: &str,
+        expr: Expression<F>,
+        cell_type: CellType,
+    ) -> Expression<F> {
+        // Check if we already stored the expression somewhere
+        let stored_expression = self.find_stored_expression(expr.clone(), cell_type);
+        match stored_expression {
+            Some(stored_expression) => {
+                debug_assert!(
+                    !matches!(cell_type, CellType::Lookup(_)),
+                    "The same lookup is done multiple times",
+                );
+                stored_expression.cell.expr()
+            }
+            None => {
+                // Even if we're building expressions for the next step,
+                // these intermediate values need to be stored in the current step.
+                // let in_next_step = self.in_next_step;
+                // self.in_next_step = false;
+                let cell = self.query_cell_with_type(cell_type);
+                // self.in_next_step = in_next_step;
+
+                // Require the stored value to equal the value of the expression
+                let name = format!("{} (stored expression)", name);
+                self.add_constraint(
+                    Box::leak(name.clone().into_boxed_str()),
+                    cell.expr() - expr.clone(),
+                );
+
+                self.stored_expressions.push(StoredExpression {
+                    name,
+                    cell: cell.clone(),
+                    cell_type,
+                    expr_id: expr.identifier(),
+                    expr,
+                });
+                cell.expr()
+            }
+        }
+    }
+
+    pub(crate) fn find_stored_expression(
+        &self,
+        expr: Expression<F>,
+        cell_type: CellType,
+    ) -> Option<&StoredExpression<F>> {
+        let expr_id = expr.identifier();
+        self.stored_expressions
+            .iter()
+            .find(|&e| e.cell_type == cell_type && e.expr_id == expr_id)
+    }
+
+    fn split_expression(
+        &mut self,
+        name: &'static str,
+        expr: Expression<F>,
+        max_degree: usize,
+    ) -> Expression<F> {
+        if expr.degree() > max_degree {
+            match expr {
+                Expression::Negated(poly) => {
+                    Expression::Negated(Box::new(self.split_expression(name, *poly, max_degree)))
+                }
+                Expression::Scaled(poly, v) => {
+                    Expression::Scaled(Box::new(self.split_expression(name, *poly, max_degree)), v)
+                }
+                Expression::Sum(a, b) => {
+                    let a = self.split_expression(name, *a, max_degree);
+                    let b = self.split_expression(name, *b, max_degree);
+                    a + b
+                }
+                Expression::Product(a, b) => {
+                    let (mut a, mut b) = (*a, *b);
+                    while a.degree() + b.degree() > max_degree {
+                        let mut split = |expr: Expression<F>| {
+                            if expr.degree() > max_degree {
+                                self.split_expression(name, expr, max_degree)
+                            } else {
+                                self.store_expression(name, expr, CellType::Storage)
+                            }
+                        };
+                        if a.degree() >= b.degree() {
+                            a = split(a);
+                        } else {
+                            b = split(b);
+                        }
+                    }
+                    a * b
+                }
+                _ => expr.clone(),
+            }
+        } else {
+            expr.clone()
+        }
+    }
+
+
 
     pub(crate) fn lookup<S: AsRef<str>>(
         &mut self,
@@ -281,6 +468,8 @@ impl<F: Field> ConstraintBuilder<F> {
         tag: S,
         values: Vec<Expression<F>>,
     ) {
+        // 在memory load_with_key 里面调
+        // cb.lookup(description, self.tag(), key_and_values);
         let condition = self.get_condition_expr();
         self.lookups.push(LookupData {
             description,

@@ -8,6 +8,7 @@ use halo2_proofs::{
     poly::Rotation,
 };
 use lazy_static::__Deref;
+use strum::EnumIter;
 use std::collections::HashMap;
 use std::cmp::{max, Ordering};
 use std::{any::Any, collections::BTreeMap};
@@ -170,14 +171,27 @@ pub enum CellType {
     Lookup(Table), 
 }
 
-/// Table being lookuped by cell
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+/// Table being lookuped by cell which stores the RLC of lookup tuples
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, EnumIter)]
 pub enum Table {
-    /// Table type
+    /// The cell contains RLC of a Fixed lookup
     Fixed,
-    /// Table type
+    /// The cell contains RLC of a Tx lookup
+    Tx,
+    /// The cell contains RLC of a Rw lookup
+    Rw,
+    /// The cell contains RLC of a Bytecode lookup
+    Bytecode,
+    /// The cell contains RLC of a Block lookup
+    Block,
+    /// The cell contains RLC of a Byte lookup
+    Byte,
+    /// The cell contains RLC of a Copy lookup
+    Copy,
+    /// The cell contains RLC of a Keccak lookup
     Keccak,
 }
+
 
 /// CellColumn
 #[derive(Clone, Debug)]
