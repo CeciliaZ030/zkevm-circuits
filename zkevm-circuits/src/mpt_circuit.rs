@@ -218,26 +218,47 @@ impl<F: Field> MPTConfig<F> {
                     // one of [is_start, is_branch, is_account, is_storage] needs to be 1,
                     // if not we goes to  _ => require!(true => false)
                     // Otherwise q_row > 0, we're in the middle of some node rows, all flags needs to be 0;
-                    ifx! {is_q_row_zero.expr() => {
-                        matchx! {
-                            a!(is_start) => {
-                                // require!(a!(q_row) + a!(q_node) => 0.expr());                      
-                                state_machine.start_config = StartConfig::configure(meta, &mut cb, ctx.clone());
-                            },
-                            a!(is_branch) => {
-                                state_machine.branch_config = ExtensionBranchConfig::configure(meta, &mut cb, ctx.clone());
-                            },
-                            a!(is_account) => {
-                                state_machine.account_config = AccountLeafConfig::configure(meta, &mut cb, ctx.clone());
-                            },
-                            a!(is_storage)  => {
-                                state_machine.storage_config = StorageLeafConfig::configure(meta, &mut cb, ctx.clone());
-                            },
-                            _ => require!(true => false),
-                        };
-                    } elsex {
-                        require! ((a!(is_start) + a!(is_branch) + a!(is_account) + a!(is_storage)) => 0.expr());
-                    }};
+                    // ifx! {is_q_row_zero.expr() => {
+                    //     matchx! {
+                    //         a!(is_start) => {
+                    //             // require!(a!(q_row) + a!(q_node) => 0.expr());                      
+                    //             state_machine.start_config = StartConfig::configure(meta, &mut cb, ctx.clone());
+                    //             require!(a!(is_branch) + a!(is_account) + a!(is_storage) => false);
+                    //         },
+                    //         a!(is_branch) => {
+                    //             state_machine.branch_config = ExtensionBranchConfig::configure(meta, &mut cb, ctx.clone());
+                    //         },
+                    //         a!(is_account) => {
+                    //             state_machine.account_config = AccountLeafConfig::configure(meta, &mut cb, ctx.clone());
+                    //         },
+                    //         a!(is_storage)  => {
+                    //             state_machine.storage_config = StorageLeafConfig::configure(meta, &mut cb, ctx.clone());
+                    //         },
+                    //         _ => require!(true => false),
+                    //     };
+                    // } elsex {
+                    //     require! ((a!(is_start) + a!(is_branch) + a!(is_account) + a!(is_storage)) => false);
+                    // }};
+
+                    matchx! {
+                        a!(is_start) => {
+                            // require!(a!(q_row) + a!(q_node) => 0.expr());                      
+                            state_machine.start_config = StartConfig::configure(meta, &mut cb, ctx.clone());
+                            // require!(a!(is_branch) + a!(is_account) + a!(is_storage) => false);
+                        },
+                        a!(is_branch) => {
+                            state_machine.branch_config = ExtensionBranchConfig::configure(meta, &mut cb, ctx.clone());
+                            // require!(a!(is_branch) + a!(is_account) + a!(is_storage) => false);
+                        },
+                        a!(is_account) => {
+                            state_machine.account_config = AccountLeafConfig::configure(meta, &mut cb, ctx.clone());
+                            
+                        },
+                        a!(is_storage)  => {
+                            state_machine.storage_config = StorageLeafConfig::configure(meta, &mut cb, ctx.clone());
+                        },
+                        _ => require!(true => false),
+                    };
 
                     // Lookahead
                     // when q_row.next() != 0 then q_row.next == q_row + 1
@@ -293,7 +314,8 @@ impl<F: Field> MPTConfig<F> {
                 byte_table,
                 &[
                     vec!["fixed".to_string(), "keccak".to_string()],
-                    ctx.memory.tags(),
+                    // "parent_s" ,"parent_c","parent_s", "key_s", "key_c"
+                    ctx.memory.tags(), 
                 ]
                 .concat(),
             );
@@ -779,10 +801,13 @@ impl<F: Field> MPTConfig<F> {
                 for (node_id, node) in nodes.iter().enumerate() {
                     // Assign bytes
                     for (idx, bytes) in node.values.iter().enumerate() {
+                        // raw bytes 先抄上去
                         for (byte, &column) in bytes.iter().zip(self.main.bytes.iter()) {
                             assign!(region, (column, offset + idx) => byte.scalar())?;
                         }
+                        // 这个是每个node里面的小行，比如 Branch 有 21，Account有12
                         let idx_scalar: F = idx.scalar();
+                        assignf!(region, (self.q_enable, offset + idx) => 1.scalar())?;
                         assign!(region, (self.q_node, offset + idx) => offset.scalar())?;
                         assign!(region, (self.q_row, offset + idx) => idx_scalar)?;
                         assign!(region, (self.q_row_inv, offset + idx) => idx_scalar.invert().unwrap_or(F::zero()))?;

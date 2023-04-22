@@ -311,7 +311,7 @@ impl<F: Field>  CellManager_<F> {
         let parent = self.parent_ctx.clone().expect("Retruning context needs parent");
         self.branch_ctxs
             .iter()
-            .map(|(name, ctx)| {
+            .map(|(_, ctx)| {
                 for c in 0..self.width {
                     new_cols[c] = max(&new_cols[c], &ctx.columns[c]).clone();
                     new_cols[c] = max(&new_cols[c], &parent.columns[c]).clone();
@@ -388,121 +388,6 @@ impl<F: Field>  CellManager_<F> {
         let mut best_index: Option<usize> = None;
         let mut best_height = self.height;
         for column in self.columns.iter() {
-            // if cell_type == CellType::LookupByte {
-            //     println!("column.cell_type: {:?}, column.index: {:?}, cell_type: {:?}", column.cell_type, column.index, cell_type);
-            // }
-            if column.cell_type == cell_type && column.height < best_height {
-                best_index = Some(column.index);
-                best_height = column.height;
-            }
-        }
-        match best_index {
-            Some(index) => index,
-            None => unreachable!("not enough cells for query: {:?}", cell_type),
-        }
-    }
-
-    pub(crate) fn get_height(&self) -> usize {
-        self.columns
-            .iter()
-            .map(|column| column.height)
-            .max()
-            .unwrap()
-    }
-
-    /// Returns a map of CellType -> (width, height, num_cells)
-    pub(crate) fn get_stats(&self) -> BTreeMap<CellType, (usize, usize, usize)> {
-        let mut data = BTreeMap::new();
-        for column in self.columns.iter() {
-            let (mut count, mut height, mut num_cells) =
-                data.get(&column.cell_type).unwrap_or(&(0, 0, 0));
-            count += 1;
-            height = height.max(column.height);
-            num_cells += column.height;
-            data.insert(column.cell_type, (count, height, num_cells));
-        }
-        data
-    }
-
-    pub(crate) fn columns(&self) -> &[CellColumn<F>] {
-        &self.columns
-    }
-}
-
-/// CellManager
-#[derive(Clone, Debug)]
-pub struct _CellManager<F> {
-    width: usize,
-    height: usize,
-    cells: Vec<Cell<F>>,
-    columns: Vec<CellColumn<F>>,
-}
-
-impl<F: Field> _CellManager<F> {
-    pub(crate) fn new(meta: &mut VirtualCells<F>, advice_columns: &[Column<Advice>]) -> Self {
-        // Setup the columns and query the cells
-        let width = advice_columns.len();
-        let height = 32;
-        let mut cells = Vec::with_capacity(height * width);
-        let mut columns = Vec::with_capacity(width);
-        for c in 0..width {
-            for r in 0..height {
-                cells.push(Cell::new(meta, advice_columns[c], r));
-            }
-            columns.push(CellColumn {
-                index: c,
-                cell_type: CellType::Storage,
-                height: 0,
-                expr: cells[c * height].expr(),
-            });
-        }
-        let mut column_idx = 0;
-
-    
-        for i in 0usize..N_BYTE_LOOKUPS {
-            columns[i].cell_type = CellType::LookupByte;
-            assert_eq!(advice_columns[column_idx].column_type().phase(), 0);
-            column_idx += 1;
-        }
-
-
-        Self {
-            width,
-            height,
-            cells,
-            columns,
-        }
-    }
-
-    pub(crate) fn query_cells(&mut self, cell_type: CellType, count: usize) -> Vec<Cell<F>> {
-        let mut cells = Vec::with_capacity(count);
-        while cells.len() < count {
-            let column_idx = self.next_column(cell_type);
-            let column = &mut self.columns[column_idx];
-            cells.push(self.cells[column_idx * self.height + column.height].clone());
-            column.height += 1;
-        }
-        cells
-    }
-
-    pub(crate) fn query_cell(&mut self, cell_type: CellType) -> Cell<F> {
-        self.query_cells(cell_type, 1)[0].clone()
-    }
-
-
-    pub(crate) fn reset(&mut self) {
-        for column in self.columns.iter_mut() {
-            column.height = 0;
-        }
-    }
-
-    fn next_column(&self, cell_type: CellType) -> usize {
-        let mut best_index: Option<usize> = None;
-        let mut best_height = self.height;
-        for column in self.columns.iter() {
-            if cell_type == CellType::LookupByte {
-                println!("column.cell_type: {:?}, column.index: {:?}, cell_type: {:?}", column.cell_type, column.index, cell_type);
-            }
             if column.cell_type == cell_type && column.height < best_height {
                 best_index = Some(column.index);
                 best_height = column.height;

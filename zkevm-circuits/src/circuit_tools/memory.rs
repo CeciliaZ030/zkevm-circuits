@@ -12,6 +12,7 @@ use std::{
 };
 
 use super::constraint_builder::{merge_lookups, ConstraintBuilder};
+use super::cell_manager::Table;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Memory<F> {
@@ -61,17 +62,24 @@ impl<F: Field> Memory<F> {
         is_first_row: Expression<F>,
     ) {
         for bank in self.banks.iter() {
+            // 处理 lookup_tables
+            // 通过纵向压缩的table.merged_cond 是否为1，来做 bank.next == bank.cur + merged_cound
             bank.generate_constraints(cb, is_first_row.expr());
+            // require 但单个和 merged_cond 都为 bool
             cb.generate_lookup_table_checks(bank.tag());
 
-            /*let lookups = cb.consume_lookups(&[bank.tag()]);
+            // 拿出需要的 lookups（不是table）并在牌堆中删掉
+            let lookups = cb.consume_lookups(&[bank.tag()]);
             if !lookups.is_empty() {
                 println!("{}: {}", bank.tag, lookups.len());
+                // table = [sel, lrc_a, lrc_b, ...] 纵向压缩
                 let (_, values) = merge_lookups(cb, lookups);
                 crate::circuit!([meta, cb], {
+                    // 展开成 cb.lookup(descr, tag, val) 
+                    // 然后又push进 cb 的 lookups 里面
                     require!(values => @bank.tag());
                 })
-            }*/
+            }
         }
     }
 
@@ -195,7 +203,7 @@ impl<F: Field> MemoryBank<F> {
         // Insert the key in the front
         let mut key_and_values = values.to_vec();
         key_and_values.insert(0, key);
-        cb.lookup_table("memory store", self.tag(), key_and_values);
+        cb.lookup_table("memory store", self.tag(), key_and_values.clone());
     }
 
     pub(crate) fn witness_store(&mut self, offset: usize, values: &[F]) {
@@ -216,11 +224,14 @@ impl<F: Field> MemoryBank<F> {
         cb: &mut ConstraintBuilder<F>,
         is_first_row: Expression<F>,
     ) {
+        // table = [sel, lrc_a, lrc_b, ...] 纵向压缩
         let lookup_table = cb.get_lookup_table(self.tag());
         crate::circuit!([meta, cb], {
             ifx! {is_first_row => {
-                require!(self.cur.expr() => 0);
+                // 一个箭头左到右就是 // cb.require_equal 
+                require!(self.cur.expr() => 0); 
             }}
+            // next == cur + 如果cond=F就为0即跳过，否则为1
             require!(self.tag(), self.next => self.cur.expr() + lookup_table.0);
         });
     }
@@ -236,7 +247,9 @@ impl<F: Field> MemoryBank<F> {
                 // Pad to the full circuit (necessary for reads)
                 let mut store_offsets = self.store_offsets.clone();
                 store_offsets.push(height);
-
+                
+                // 如 store_offsets = [3,4,1]
+                // assign 出 self.column 为 = [0,0,0,0, 1,1,1,1,1, 2,2]
                 let mut store_index = 0;
                 let mut offset = 0;
                 for &stored_offset in store_offsets.iter() {

@@ -281,28 +281,36 @@ impl<F: Field> ConstraintBuilder<F> {
                 }
             }
         }
+
+        // 表有：[ "parent_s" ,"parent_c","parent_s", "key_s", "key_c"]
         for lookup_name in lookup_names.iter() { 
+             // 拿对应的表 【sel*rlc_a, sel*rlc_b, ...】
+             let table = self.get_lookup_table_values(lookup_name);
+            // 把当前的表所对应的lookup data拿出来
             let lookups = self
                 .lookups
                 .iter()
                 .cloned()
                 .filter(|lookup| lookup.tag == lookup_name.as_ref())
                 .collect::<Vec<_>>();
-            // [ "parent_s" ,"parent_c","parent_s", "key_s", "key_c"]
+            // 比如 “parent_s" 有十个lookup data，逐个轮训
             for lookup in lookups.iter() {
+                
+                // 终于到了重点👇，调Halo2的lookup API
                 meta.lookup_any(lookup.description, |_meta| {
-                    // 拿对应的表
-                    let table = self.get_lookup_table_values(lookup_name);
                     // 拿要查的值
                     let mut values: Vec<_> = lookup
                         .values
                         .iter()
                         .map(|value| lookup.condition.expr() * value.expr())
                         .collect();
+                    // 如果设计的Table 有四列 = (A,B,C,D)，而 Lookup = (A,B)，保证后者短于前者
                     assert!(table.len() >= values.len());
+                    // Lookup 补零 => (A,B,0,0)，因为去找的这部分 Table 一定只用了前两列
                     while values.len() < table.len() {
                         values.push(0.expr());
                     }
+                    // 形成符合Halo2的Tuples，[(value0, table0),(value1, table1),...]
                     table
                         .iter()
                         .zip(values.iter())
@@ -340,7 +348,6 @@ impl<F: Field> ConstraintBuilder<F> {
             condition,
             values,
         });
-        // 用：
     }
 
     pub(crate) fn add_lookup_rlc(&mut self, name: &str, lookup: Vec<Expression<F>>, table_type: Table) {
@@ -488,22 +495,25 @@ impl<F: Field> ConstraintBuilder<F> {
     }
 
     pub(crate) fn consume_lookups<S: AsRef<str>>(&mut self, tags: &[S]) -> Vec<LookupData<F>> {
+        // 拿出需要的
         let lookups = self.get_lookups(tags);
+       // 把需要的从所有 loolups 中删掉
         self.lookups
             .retain(|lookup| tags.iter().any(|tag| lookup.tag != tag.as_ref()));
         lookups
     }
 
+    /// 
     pub(crate) fn get_lookup_table<S: AsRef<str>>(
         &self,
         tag: S,
     ) -> (Expression<F>, Vec<Expression<F>>) {
-        let lookups = self
+        let lookups: Vec<&LookupData<F>> = self
             .lookup_tables
             .iter()
             .filter(|lookup| lookup.tag == tag.as_ref())
             .collect::<Vec<_>>();
-
+        // table = [sel, lrc_a, lrc_b, ...] 纵向压缩
         merge_values_unsafe(
             lookups
                 .iter()
@@ -511,9 +521,16 @@ impl<F: Field> ConstraintBuilder<F> {
                 .collect::<Vec<_>>(),
         )
     }
-
+    
+    /// 
     pub(crate) fn get_lookup_table_values<S: AsRef<str>>(&self, tag: S) -> Vec<Expression<F>> {
+        // store_with_key 储存了零散的 lookup data 去形成 table
+        // 如 (Tx, 1,2,3), (Kecceck, 4), (Tx, 5,6,7), (Block, 8,9)
+        // 这里取比如说其中的 (cond -> Tx, 1,2,3)，(cond -> Tx, 5,6,7), ... 
+        // 纵向形成 rlc     (sel, Tx_rlc, rlc_1, rlc_2, rlc_3)
         let lookup_table = self.get_lookup_table(tag);
+
+        // 每项和sel乘 【sel*Tx_rlc ,sel*rlc_1, sel*rlc_2, sel*rlc_3】
         // Combine with the merged selector as well
         lookup_table
             .1
@@ -523,21 +540,25 @@ impl<F: Field> ConstraintBuilder<F> {
     }
 
     pub(crate) fn generate_lookup_table_checks<S: AsRef<str>>(&mut self, tag: S) {
+        // 把要查的 table 拿出来
         let lookups = self
             .lookup_tables
             .iter()
             .filter(|lookup| lookup.tag == tag.as_ref())
             .collect::<Vec<_>>();
+        // 把所有sel拿出来
         let selectors = lookups
             .iter()
             .map(|lookup| lookup.condition.expr())
             .collect::<Vec<_>>();
+        // 要求每个是 bool
         for selector in selectors.iter() {
             self.require_boolean(
                 "lookup table condition needs to be boolean",
                 selector.expr(),
             );
         }
+        // 要求加起来也是 bool
         let selector = sum::expr(&selectors);
         self.require_boolean(
             "lookup table conditions sum needs to be boolean",
@@ -563,10 +584,12 @@ impl<F: Field> ConstraintBuilder<F> {
 
 }
 
+/// Merge lookups that with mutually exclusive conditions
 pub(crate) fn merge_lookups<F: Field>(
     cb: &mut ConstraintBuilder<F>,
     lookups: Vec<LookupData<F>>,
 ) -> (Expression<F>, Vec<Expression<F>>) {
+    // table = [sel, lrc_a, lrc_b, ...] 纵向压缩
     merge_values(
         cb,
         lookups
@@ -576,6 +599,7 @@ pub(crate) fn merge_lookups<F: Field>(
     )
 }
 
+/// Merge lookup values that with mutually exclusive conditions
 pub(crate) fn merge_values<F: Field>(
     cb: &mut ConstraintBuilder<F>,
     values: Vec<(Expression<F>, Vec<Expression<F>>)>,
@@ -585,6 +609,7 @@ pub(crate) fn merge_values<F: Field>(
     crate::circuit!([meta, cb], {
         require!(selector => bool);
     });
+    // table = [sel, lrc_a, lrc_b, ...]
     merge_values_unsafe(values)
 }
 
@@ -594,16 +619,27 @@ pub(crate) fn merge_values_unsafe<F: Field>(
     if values.is_empty() {
         return (0.expr(), Vec::new());
     }
+    // 总 select，如果所有cond都是0就算了
+    // selector = 1+0+1+1+0+... = bool 
     let selector = sum::expr(values.iter().map(|(condition, _)| condition.expr()));
     // Merge
+    // 找表最宽的宽度
     let max_length = values.iter().map(|(_, values)| values.len()).max().unwrap();
     let mut merged_values = vec![0.expr(); max_length];
     let default_value = 0.expr();
+    // 对每一列进行合并
     for (idx, value) in merged_values.iter_mut().enumerate() {
-        *value = sum::expr(values.iter().map(|(condition, values)| {
-            condition.expr() * values.get(idx).unwrap_or_else(|| &default_value).expr()
+        *value = sum::expr(
+            values.iter().map(
+                |(condition, values)| {
+                    // 逐行的每个val 乘上 cond，
+                    // values = [{cond, (a,b,c)}, {cond, (a,b,c)}, {cond, (a,b,c)}]
+                    // cond1*a1 + cond2*a2 + cond3*a3
+                    condition.expr() * values.get(idx).unwrap_or_else(|| &default_value).expr()
         }));
     }
+    // 就是最后每个 table 会纵向压扁成列的 lrc
+    // table = [sel, lrc_a, lrc_b, ...]
     (selector, merged_values)
 }
 
