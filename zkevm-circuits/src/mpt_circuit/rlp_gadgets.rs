@@ -334,6 +334,7 @@ pub(crate) struct RLPValueWitness {
 
 impl<F: Field> RLPValueGadget<F> {
     pub(crate) fn construct(cb: &mut ConstraintBuilder<F>, bytes: &[Expression<F>]) -> Self {
+    
         let is_short = cb.query_cell();
         let is_long =  cb.query_cell();
         let is_very_long = cb.query_cell();

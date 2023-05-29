@@ -70,6 +70,19 @@ impl<F: Field> Memory<F> {
 
             // 拿出需要的 lookups（不是table）并在牌堆中删掉
             let lookups = cb.consume_lookups(&[bank.tag()]);
+            // 就是每个 bank 在这一个 gate 中只允许一个 lookup
+            /// 如 main_bank: [
+            ///         s1 * (proof_type1, addr_rlc1), 
+            ///         s2 * (proof_type2, addr_rlc2)
+            /// ] 
+            /// 最后变成 ==> meta.lookup_any[
+            ///                     value_expr        |  table_expr
+            ///             (s1*proof_type1+s2*proof_type2, proof_type)
+            ///             (s1*addr_rlc1+s2*addr_rlc2, addr_rlc)
+            ///         ]
+            /// s1, s2 只有一个为 1，因为跑 memory.generate_constraints() 是结束一个 MPT Gate 
+            /// 而一个 MPT Gate 对应一个 node，那么上下级的 prent, child, proof_type 都是唯一的
+            /// 如果有 !ifx {} elsex {}, 此时保证只有一个branch taken
             if !lookups.is_empty() {
                 println!("{}: {}", bank.tag, lookups.len());
                 // table = [sel, lrc_a, lrc_b, ...] 纵向压缩

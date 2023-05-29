@@ -54,7 +54,7 @@ impl<F: Field> ExecutionGadget<F> for AddSubGadget<F> {
         cb.stack_pop(b.expr());
         cb.stack_push(select::expr(is_sub.expr().0, a.expr(), c.expr()));
 
-        // State transition
+        // State transiƒtion
         let step_state_transition = StepStateTransition {
             rw_counter: Delta(3.expr()),
             program_counter: Delta(1.expr()),

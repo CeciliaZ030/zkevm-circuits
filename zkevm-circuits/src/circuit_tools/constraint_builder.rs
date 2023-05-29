@@ -1,14 +1,22 @@
 //! Circuit utilities
-use crate::{evm_circuit::{util::{rlc, CachedRegion}, table::Lookup}, util::Expr, bytecode_circuit::param::HASH_WIDTH};
+use crate::{
+    bytecode_circuit::param::HASH_WIDTH,
+    evm_circuit::{
+        table::Lookup,
+        util::{rlc, CachedRegion},
+    },
+    util::Expr,
+};
 use eth_types::Field;
 use gadgets::util::{and, select, sum, Scalar};
 use halo2_proofs::{
-    plonk::{ConstraintSystem, Expression, Column, Fixed, Error}, 
-    poly::Rotation, circuit::AssignedCell
+    circuit::AssignedCell,
+    plonk::{Column, ConstraintSystem, Error, Expression, Fixed},
+    poly::Rotation,
 };
 use itertools::Itertools;
 
-use super::cell_manager::{Cell, CellManager_, CellType, DataTransition, Trackable, Table};
+use super::cell_manager::{Cell, CellManager_, CellType, DataTransition, Table, Trackable};
 
 /// Lookup data
 #[derive(Clone)]
@@ -31,8 +39,9 @@ pub struct ConstraintBuilder<F> {
     conditions: Vec<Expression<F>>,
 
     /// The lookups
-    /// 需要查的数据（descr，tag, condition: Expression<F>, values: Vec<Expression<F>>）
-    /// 在memory load_with_key 里面调，load 的 Vec<LookupData<F>> 是 lookup 这个行为
+    /// 需要查的数据（descr，tag, condition: Expression<F>, values:
+    /// Vec<Expression<F>>） 在memory load_with_key 里面调，load 的
+    /// Vec<LookupData<F>> 是 lookup 这个行为
     pub lookups: Vec<LookupData<F>>,
     /// The lookup tables
     /// 在memory store_with_key 里面调，store 的 Vec<LookupData<F>> 是形成这张表
@@ -62,7 +71,7 @@ pub struct StoredExpression<F> {
 }
 
 impl<F: Field> StoredExpression<F> {
-    /// Assign cell with lookup expression 
+    /// Assign cell with lookup expression
     pub fn assign(
         &self,
         region: &mut CachedRegion<'_, '_, F>,
@@ -94,7 +103,6 @@ impl<F: Field> StoredExpression<F> {
     }
 }
 
-
 impl<F: Field> ConstraintBuilder<F> {
     pub(crate) fn new(max_degree: usize, cell_manager: Option<CellManager_<F>>) -> Self {
         ConstraintBuilder {
@@ -117,32 +125,34 @@ impl<F: Field> ConstraintBuilder<F> {
         self.cell_manager = Some(cell_manager);
     }
 
-    pub(crate) fn set_power_of_randomness(&mut self, power_of_randomness: [Expression<F>; HASH_WIDTH]) {
+    pub(crate) fn set_power_of_randomness(
+        &mut self,
+        power_of_randomness: [Expression<F>; HASH_WIDTH],
+    ) {
         self.power_of_randomness = Some(power_of_randomness);
     }
-
 
     pub(crate) fn enter_branch_context(&mut self) {
         println!("=====>");
         match self.cell_manager.as_mut() {
             Some(cm) => cm.cur_to_parent(),
-            None => ()
-        };   
+            None => (),
+        };
     }
 
     pub(crate) fn switch_branch_context(&mut self, branch_name: &str) {
         match self.cell_manager.as_mut() {
             Some(cm) => cm.cur_to_branch(branch_name),
-            None => ()
-        }; 
+            None => (),
+        };
     }
 
     pub(crate) fn exit_branch_context(&mut self) {
         println!("^*****");
         match self.cell_manager.as_mut() {
             Some(cm) => cm.recover_max_branch(),
-            None => ()
-        }; 
+            None => (),
+        };
     }
 
     pub(crate) fn require_zero(&mut self, name: &'static str, constraint: Expression<F>) {
@@ -264,7 +274,7 @@ impl<F: Field> ConstraintBuilder<F> {
         &mut self,
         meta: &mut ConstraintSystem<F>,
         byte_table: [Column<Fixed>; 1],
-        lookup_names: &[S], 
+        lookup_names: &[S],
         // "keccek", "fixed", "parent_s" ,"parent_c","parent_s", "key_s", "key_c"
     ) {
         if let Some(cm) = self.cell_manager.clone() {
@@ -273,19 +283,20 @@ impl<F: Field> ConstraintBuilder<F> {
                     CellType::Storage => (),
                     CellType::LookupByte => {
                         meta.lookup_any("Byte lookup", |meta| {
-                            let byte_table_expression = meta.query_fixed(byte_table[0], Rotation::cur());
+                            let byte_table_expression =
+                                meta.query_fixed(byte_table[0], Rotation::cur());
                             vec![(column.expr(), byte_table_expression)]
                         });
-                    },
-                    CellType::Lookup( .. ) => ()
+                    }
+                    CellType::Lookup(..) => (),
                 }
             }
         }
 
         // 表有：[ "parent_s" ,"parent_c","parent_s", "key_s", "key_c"]
-        for lookup_name in lookup_names.iter() { 
-             // 拿对应的表 【sel*rlc_a, sel*rlc_b, ...】
-             let table = self.get_lookup_table_values(lookup_name);
+        for lookup_name in lookup_names.iter() {
+            // 拿对应的表 【sel*rlc_a, sel*rlc_b, ...】
+            let table = self.get_lookup_table_values(lookup_name);
             // 把当前的表所对应的lookup data拿出来
             let lookups = self
                 .lookups
@@ -295,7 +306,6 @@ impl<F: Field> ConstraintBuilder<F> {
                 .collect::<Vec<_>>();
             // 比如 “parent_s" 有十个lookup data，逐个轮训
             for lookup in lookups.iter() {
-                
                 // 终于到了重点👇，调Halo2的lookup API
                 meta.lookup_any(lookup.description, |_meta| {
                     // 拿要查的值
@@ -339,8 +349,8 @@ impl<F: Field> ConstraintBuilder<F> {
         tag: S,
         values: Vec<Expression<F>>,
     ) {
-        // 上层：在 memory里面调 cb.lookup_table("memory store", self.tag(), key_and_values);
-        // 存：
+        // 上层：在 memory里面调 cb.lookup_table("memory store", self.tag(),
+        // key_and_values); 存：
         let condition = self.get_condition_expr();
         self.lookup_tables.push(LookupData {
             description,
@@ -350,10 +360,16 @@ impl<F: Field> ConstraintBuilder<F> {
         });
     }
 
-    pub(crate) fn add_lookup_rlc(&mut self, name: &str, lookup: Vec<Expression<F>>, table_type: Table) {
+    pub(crate) fn add_lookup_rlc(
+        &mut self,
+        name: &str,
+        lookup: Vec<Expression<F>>,
+        table_type: Table,
+    ) {
         if let Some(power_of_randomness) = self.power_of_randomness.as_ref() {
             let lookup = match self.get_condition() {
-                Some(condition) => lookup.into_iter()
+                Some(condition) => lookup
+                    .into_iter()
                     .map(|expr| condition.clone() * expr)
                     .collect(),
                 None => lookup,
@@ -467,8 +483,6 @@ impl<F: Field> ConstraintBuilder<F> {
         }
     }
 
-
-
     pub(crate) fn lookup<S: AsRef<str>>(
         &mut self,
         description: &'static str,
@@ -497,13 +511,13 @@ impl<F: Field> ConstraintBuilder<F> {
     pub(crate) fn consume_lookups<S: AsRef<str>>(&mut self, tags: &[S]) -> Vec<LookupData<F>> {
         // 拿出需要的
         let lookups = self.get_lookups(tags);
-       // 把需要的从所有 loolups 中删掉
+        // 把需要的从所有 loolups 中删掉
         self.lookups
             .retain(|lookup| tags.iter().any(|tag| lookup.tag != tag.as_ref()));
         lookups
     }
 
-    /// 
+    ///
     pub(crate) fn get_lookup_table<S: AsRef<str>>(
         &self,
         tag: S,
@@ -521,12 +535,12 @@ impl<F: Field> ConstraintBuilder<F> {
                 .collect::<Vec<_>>(),
         )
     }
-    
-    /// 
+
+    ///
     pub(crate) fn get_lookup_table_values<S: AsRef<str>>(&self, tag: S) -> Vec<Expression<F>> {
         // store_with_key 储存了零散的 lookup data 去形成 table
         // 如 (Tx, 1,2,3), (Kecceck, 4), (Tx, 5,6,7), (Block, 8,9)
-        // 这里取比如说其中的 (cond -> Tx, 1,2,3)，(cond -> Tx, 5,6,7), ... 
+        // 这里取比如说其中的 (cond -> Tx, 1,2,3)，(cond -> Tx, 5,6,7), ...
         // 纵向形成 rlc     (sel, Tx_rlc, rlc_1, rlc_2, rlc_3)
         let lookup_table = self.get_lookup_table(tag);
 
@@ -581,7 +595,6 @@ impl<F: Field> ConstraintBuilder<F> {
     pub(crate) fn set_query_offset(&mut self, query_offset: i32) {
         self.query_offset = query_offset;
     }
-
 }
 
 /// Merge lookups that with mutually exclusive conditions
@@ -620,22 +633,20 @@ pub(crate) fn merge_values_unsafe<F: Field>(
         return (0.expr(), Vec::new());
     }
     // 总 select，如果所有cond都是0就算了
-    // selector = 1+0+1+1+0+... = bool 
+    // selector = 1+0+1+1+0+... = bool
     let selector = sum::expr(values.iter().map(|(condition, _)| condition.expr()));
     // Merge
     // 找表最宽的宽度
     let max_length = values.iter().map(|(_, values)| values.len()).max().unwrap();
     let mut merged_values = vec![0.expr(); max_length];
     let default_value = 0.expr();
+    // values = [{cond, (a,b,c)}, {cond, (a,b,c)}, {cond, (a,b,c)}]
     // 对每一列进行合并
     for (idx, value) in merged_values.iter_mut().enumerate() {
-        *value = sum::expr(
-            values.iter().map(
-                |(condition, values)| {
-                    // 逐行的每个val 乘上 cond，
-                    // values = [{cond, (a,b,c)}, {cond, (a,b,c)}, {cond, (a,b,c)}]
-                    // cond1*a1 + cond2*a2 + cond3*a3
-                    condition.expr() * values.get(idx).unwrap_or_else(|| &default_value).expr()
+        *value = sum::expr(values.iter().map(|(condition, values)| {
+            // 逐行的每个val 乘上 cond，
+            // cond1*a1 + cond2*a2 + cond3*a3
+            condition.expr() * values.get(idx).unwrap_or_else(|| &default_value).expr()
         }));
     }
     // 就是最后每个 table 会纵向压扁成列的 lrc
@@ -1298,7 +1309,7 @@ macro_rules! _matchx {
 
         println!("$cb.exit_branch_context -- _matchx");
         $cb.exit_branch_context();
-        
+
         cases.apply_conditions()
     }};
 }
@@ -1307,7 +1318,7 @@ macro_rules! _matchx {
 #[macro_export]
 macro_rules! _ifx {
     ($cb:expr, $($condition:expr),* => $when_true:block $(elsex $when_false:block)?)  => {{
-        
+
         let descr = stringify!($($condition)*);
         let condition = and::expr([$($condition.expr()),*]);
 
@@ -1317,7 +1328,7 @@ macro_rules! _ifx {
         $cb.push_condition(condition.expr());
         let ret_true = $when_true;
         $cb.pop_condition();
-    
+
         println!("$cb.switch_branch_context: {:?}{:?}", "ifx!", descr);
         $cb.switch_branch_context(&format!("{:?}{:?}", "ifx!", descr));
 

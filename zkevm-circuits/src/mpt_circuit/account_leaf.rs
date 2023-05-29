@@ -110,6 +110,7 @@ impl<F: Field> AccountLeafConfig<F> {
             // Don't allow an account node to follow an account node
             require!(config.main_data.is_below_account => false);
 
+
             let mut key_rlc = vec![0.expr(); 2];
             let mut nonce_rlc = vec![0.expr(); 2];
             let mut balance_rlc = vec![0.expr(); 2];
