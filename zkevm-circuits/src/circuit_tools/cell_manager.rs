@@ -391,7 +391,7 @@ impl<F: Field, C: CellTypeTrait> CellManager_<F, C> {
             // Search best cell in window of columns designated for this CellType
             let (index, height) = self.next_column(cell_type, &self.columns[*start_width..start_width + window]);
             targets.push(cell_list[index * self.max_height + height].clone());
-            //// println!("at ({} * {} + {})", index, self.max_height, height);
+            //////- println!("at ({} * {} + {})", index, self.max_height, height);
             self.columns[start_width + index].height += 1;
         }
         targets

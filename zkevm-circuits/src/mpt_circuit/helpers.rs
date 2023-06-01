@@ -6,7 +6,7 @@ use crate::{
             ConstraintBuilder, RLCChainable, RLCChainableValue, RLCable, RLCableValue,
         },
         gadgets::IsEqualGadget,
-        memory::MemoryBank, cached_region::{CachedRegion, ChallengeSet},
+        memory::MemoryBank, cached_region::{CachedRegion, ChallengeSet, StoredExpression},
     },
     matchw,
     mpt_circuit::{
@@ -20,6 +20,7 @@ use gadgets::util::{or, pow, Scalar};
 use halo2_proofs::{
     plonk::{Error, Expression, VirtualCells},
 };
+use std::collections::HashMap;
 
 use super::{
     rlp_gadgets::{
@@ -802,19 +803,29 @@ pub(crate) fn main_memory() -> String {
 #[derive(Clone)]
 pub struct MPTConstraintBuilder<F> {
     pub base: ConstraintBuilder<F, EvmCellType>,
-    pub challenges: Option<Challenges<Expression<F>>>,
+    pub randomness: Option<Expression<F>>,
+    pub stored_expressions_map: HashMap<MptState, Vec<StoredExpression<F, EvmCellType>>>,
+}
+
+#[derive(Clone, Hash)]
+pub enum MptState{
+    Start,
+    Branch,
+    Acccount,
+    Storage,
 }
 
 impl<F: Field> MPTConstraintBuilder<F> {
 
     pub(crate) fn new(
         max_degree: usize, 
-        challenges: Option<Challenges<Expression<F>>>,
-        cell_manager: Option<CellManager_<F, EvmCellType>>
+        cell_manager: Option<CellManager_<F, EvmCellType>>,
+        randomness: Option<Expression<F>>
     ) -> Self {
         MPTConstraintBuilder {
             base: ConstraintBuilder::new(max_degree, cell_manager),
-            challenges,
+            randomness,
+            stored_expressions_map: HashMap::new(),
         }
     }
 
@@ -903,29 +914,34 @@ impl<F: Field> MPTConstraintBuilder<F> {
 
     pub(crate) fn lookup_keccak(
         &mut self,
+        description: &str,
         is_enabled: Expression<F>,
         input_rlc: Expression<F>,
         input_len: Expression<F>,
         output_rlc: Expression<F>
     ) {
-        let chellenge = self.challenges.as_ref().expect("Challenges unset!");
         self.base.add_static_lookup(
-            "keccak", 
-            chellenge.lookup_input(), 
+            &format!("KeccakLookup {}", description), 
+            self.randomness.expect("Randomness unset for static lookup rlc."), 
             EvmCellType::Lookup(Table::Keccak), 
             vec![is_enabled, input_rlc, input_len, output_rlc]);
     }
 
+    pub(crate) fn record_static_lookups(&self, state: MptState) {
+        self.stored_expressions_map.insert(state, self.base.get_static_lookups();
+        self.base.clear_static_lookups();
+    }
+
     pub(crate) fn lookup_fixed(
         &mut self,
+        description: &str,
         tag: Expression<F>,
         val_1: Expression<F>,
         val_2: Expression<F>,
     ) {
-        let chellenge = self.challenges.as_ref().expect("Challenges unset!");
         self.base.add_static_lookup(
-            "fixed", 
-            chellenge.lookup_input(), 
+            &format!("FixedLookup {}", description), 
+            self.randomness.expect("Randomness unset for static lookup rlc."), 
             EvmCellType::Lookup(Table::Fixed), 
             vec![tag, val_1, val_2]);
     }
@@ -1161,7 +1177,7 @@ pub struct MainRLPGadget<F> {
 
 impl<F: Field> MainRLPGadget<F> {
     pub(crate) fn construct(cb: &mut MPTConstraintBuilder<F>, r: &Expression<F>) -> Self {
-        println!("_________ MainRLPGadget ________");
+       //- println!("_________ MainRLPGadget ________");
         let mut config = MainRLPGadget::default();
         config.bytes = cb.query_cells::<34>().to_vec();
         circuit!([meta, cb], {
@@ -1185,11 +1201,11 @@ impl<F: Field> MainRLPGadget<F> {
             config.mult_diff = cb.query_cell();
             let mult_diff = config.mult_diff.expr();
 
-            println!("cb.lookup_fixed: \n\tFixedTableTag::RLen.expr(): {:?}\n\tconfig.rlp.len(): {:?}\n\tmult_diff: {:?}", 
-                <FixedTableTag as Expr<F>>::expr(&FixedTableTag::RMult).identifier(), config.rlp.len().identifier(), mult_diff.identifier());
+           //- println!("cb.lookup_fixed: \n\tFixedTableTag::RLen.expr(): {:?}\n\tconfig.rlp.len(): {:?}\n\tmult_diff: {:?}", 
+                // <FixedTableTag as Expr<F>>::expr(&FixedTableTag::RMult).identifier(), config.rlp.len().identifier(), mult_diff.identifier());
 
 
-            cb.lookup_fixed(FixedTableTag::RMult.expr(), config.rlp.num_bytes(), mult_diff.clone());
+            cb.lookup_fixed("main rlp length mult", FixedTableTag::RMult.expr(), config.rlp.num_bytes(), mult_diff.clone());
             require!((FixedTableTag::RMult, config.rlp.num_bytes(), mult_diff) => @"fixed");
 
             // "free" input that needs to be constrained externally!
@@ -1229,6 +1245,7 @@ impl<F: Field> MainRLPGadget<F> {
             .assign(region, offset, rlp_witness.num_bytes().scalar())?;
         self.len
             .assign(region, offset, rlp_witness.len().scalar())?;
+       //- println!("assign RLPItemView.len {:?}", self.len.identifier());
 
         self.mult_diff
             .assign(region, offset, pow::value(r, rlp_witness.num_bytes()))?;
@@ -1238,6 +1255,8 @@ impl<F: Field> MainRLPGadget<F> {
         self.rlc_rlp
             .assign(region, offset, rlp_witness.rlc_rlp(r))?;
 
+       //- println!("assign rlc_rlp {:?}", self.rlc_rlp.identifier());
+        
         assign!(region, self.tag, offset => self.tag(is_nibbles).scalar())?;
 
         Ok(rlp_witness)
@@ -1253,6 +1272,7 @@ impl<F: Field> MainRLPGadget<F> {
         circuit!([meta, cb.base], {
             require!(self.tag.rot(meta, rot) => self.tag(is_nibbles).expr());
         });
+       //- println!("create_view RLPItemView.len {:?}", self.len.rot(meta, rot).identifier());
         RLPItemView {
             num_bytes: Some(self.num_bytes.rot(meta, rot)),
             len: Some(self.len.rot(meta, rot)),

@@ -168,7 +168,7 @@ fn test_graph() {
 
     let circuit = TestCircuit::<Fr>::default();
 
-    println!("Start graphing");
+   //- println!("Start graphing");
 
     let root = BitMapBackend::new("test.png", (512, 1024)).into_drawing_area();
     root.fill(&WHITE).unwrap();

@@ -46,21 +46,24 @@ pub struct ConstraintBuilder<F, C: CellTypeTrait> {
 }
 
 impl<F: Field, C: CellTypeTrait> ConstraintBuilder<F, C> {
-    pub(crate) fn new(max_degree: usize, cell_manager: Option<CellManager_<F, C>>) -> Self {
+    pub(crate) fn new(
+        max_degree: usize, 
+        cell_manager: Option<CellManager_<F, C>>
+    ) -> Self {
         ConstraintBuilder {
             constraints: Vec::new(),
             max_degree,
             conditions: Vec::new(),
             dynamic_lookups: HashMap::new(),
             dynamic_tables: HashMap::new(),
+            static_lookups: Vec::new(),
             cell_manager,
             disable_description: false,
-            static_lookups: Vec::new(),
         }
     }
 
     pub(crate) fn set_cell_manager(&mut self, cell_manager: CellManager_<F, C>) {
-        println!("set_cell_manager!!");
+       //- println!("set_cell_manager!!");
         self.cell_manager = Some(cell_manager);
     }
 
@@ -191,28 +194,21 @@ impl<F: Field, C: CellTypeTrait> ConstraintBuilder<F, C> {
         &self,
         meta: &mut ConstraintSystem<F>,
         challenge: Expression<F>,
-        cell_managers: Vec<CellManager_<F, C>>,
         tables: Vec<&dyn LookupTable_<F, TableCellType = C>>
     ) {
-        println!("____ build_static_lookups ____ \n challen {:?}", challenge);
-        // let cm = self.cell_manager.as_ref().expect("CellManager unset!");
-        for cm in cell_managers {
-            for table in &tables {
-                let cell_type = table.get_type_();
-                println!("cell_type {:?}: ", cell_type);
-                for col in cm.get_typed_columns(cell_type) {
-                    print!("col: {:?} ", col.expr.identifier());
-                    meta.lookup_any(
-                        "static lookup",
-                        |meta| {
-                            vec![(col.expr, rlc::expr(&table.table_exprs(meta), challenge.clone()))]
-                        }
-                    );
-                }
+        let cm = self.cell_manager.as_ref().expect("CellManager unset!");
+        for table in &tables {
+            let cell_type = table.get_type_();
+            for col in cm.get_typed_columns(cell_type) {
+                meta.lookup_any(
+                    "static lookup",
+                    |meta| {
+                        vec![(col.expr, rlc::expr(&table.table_exprs(meta), challenge.clone()))]
+                    }
+                );
             }
         }
     }
-
     pub(crate) fn build_dynamic_lookups<S: AsRef<str>>(
         &self,
         meta: &mut ConstraintSystem<F>,
@@ -311,9 +307,6 @@ impl<F: Field, C: CellTypeTrait> ConstraintBuilder<F, C> {
         }
     }
 
-
-    // Todo(Cecilia): incorperate the challenge into CB
-    //                then remove from MPT ctx
     pub(crate) fn add_static_lookup(
         &mut self,
         description: &str,
@@ -321,18 +314,22 @@ impl<F: Field, C: CellTypeTrait> ConstraintBuilder<F, C> {
         cell_type: C,
         values: Vec<Expression<F>>,
     ) {
-        println!("________ add_static_lookup ________ \nchallenge: {:?}", challenge);
+       //- println!("________ add_static_lookup ________ \n descr {:?}", description);
         let compressed_expr = self.split_expression(
             "Lookup compression",
             rlc::expr(&values, challenge),
         );
-        println!("compressed_expr: {:?}", compressed_expr.identifier());
+       //- println!("compressed_expr: {:?}", compressed_expr.identifier());
         self.store_expression(description, compressed_expr, cell_type);
     }
 
 
     pub(crate) fn get_static_lookups(&self) -> Vec<StoredExpression<F, C>> {
         self.static_lookups.clone()
+    }
+
+    pub(crate) fn clear_static_lookups(&mut self) {
+        self.static_lookups.clear();
     }
 
 
@@ -391,7 +388,7 @@ impl<F: Field, C: CellTypeTrait> ConstraintBuilder<F, C> {
         cell_type: C,
     ) -> Expression<F> {
 
-        println!("\t ____ store_expression ____");
+       //- println!("\t ____ store_expression ____");
 
         // Check if we already stored the expression somewhere
         let stored_expression = self.find_stored_expression(&expr, cell_type);
@@ -408,7 +405,7 @@ impl<F: Field, C: CellTypeTrait> ConstraintBuilder<F, C> {
                 //     Box::leak(name.clone().into_boxed_str()),
                 //     cell.expr() - expr.clone(),
                 // );
-                println!("\n pushing in cell {:?}: {:?}", cell.identifier(), expr.identifier());
+               //- println!("\n pushing in cell {:?}: {:?}", cell.identifier(), expr.identifier());
                 self.static_lookups.push(StoredExpression {
                     name,
                     cell: cell.clone(),
@@ -481,7 +478,7 @@ impl<F: Field, C: CellTypeTrait> ConstraintBuilder<F, C> {
         let mut expressions = self.constraints.clone();
         expressions.sort_by(|a, b| a.1.degree().cmp(&b.1.degree()));
         for (name, expr) in expressions.iter() {
-            println!("'{}': {}", name, expr.degree());
+           //- println!("'{}': {}", name, expr.degree());
         }
     }
 }

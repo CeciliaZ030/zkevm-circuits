@@ -157,8 +157,19 @@ impl<F: Field> ExtensionGadget<F> {
             let key_len = config.rlp_key.key_value.len();
             let key_num_bytes_for_mult = key_len
                 - ifx! {not!(key_data.is_odd.expr() * config.is_key_part_odd.expr()) => { 1.expr() }};
+            
             // Get the multiplier for this key length
             config.mult_key = cb.query_cell();
+
+           //- println!("key_num_bytes_for_mult: {},  config.mult_key.expr(): {}", 
+            // key_num_bytes_for_mult.identifier(), config.mult_key.expr().identifier());
+            
+            cb.lookup_fixed(
+                "extension key length mult",
+                FixedTableTag::RMult.expr(),
+                key_num_bytes_for_mult.expr(),
+                config.mult_key.expr(),
+            );
             require!((FixedTableTag::RMult, key_num_bytes_for_mult, config.mult_key.expr()) => @"fixed");
 
             // Store the post ext state
