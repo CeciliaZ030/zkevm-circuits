@@ -161,8 +161,8 @@ impl<F: Field> ExtensionGadget<F> {
             // Get the multiplier for this key length
             config.mult_key = cb.query_cell();
 
-           //- println!("key_num_bytes_for_mult: {},  config.mult_key.expr(): {}", 
-            // key_num_bytes_for_mult.identifier(), config.mult_key.expr().identifier());
+           println!("key_num_bytes_for_mult: {},  config.mult_key.expr(): {}", 
+            key_num_bytes_for_mult.identifier(), config.mult_key.expr().identifier());
             
             cb.lookup_fixed(
                 "extension key length mult",

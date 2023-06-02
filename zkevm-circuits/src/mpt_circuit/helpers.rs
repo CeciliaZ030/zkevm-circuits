@@ -804,14 +804,14 @@ pub(crate) fn main_memory() -> String {
 pub struct MPTConstraintBuilder<F> {
     pub base: ConstraintBuilder<F, EvmCellType>,
     pub randomness: Option<Expression<F>>,
-    pub stored_expressions_map: HashMap<MptState, Vec<StoredExpression<F, EvmCellType>>>,
+    pub stored_expressions_map: HashMap<LookupState, Vec<StoredExpression<F, EvmCellType>>>,
 }
 
-#[derive(Clone, Hash)]
-pub enum MptState{
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub enum LookupState{
     Start,
     Branch,
-    Acccount,
+    Account,
     Storage,
 }
 
@@ -922,13 +922,13 @@ impl<F: Field> MPTConstraintBuilder<F> {
     ) {
         self.base.add_static_lookup(
             &format!("KeccakLookup {}", description), 
-            self.randomness.expect("Randomness unset for static lookup rlc."), 
+            self.randomness.as_ref().expect("Randomness unset for static lookup rlc.").clone(), 
             EvmCellType::Lookup(Table::Keccak), 
             vec![is_enabled, input_rlc, input_len, output_rlc]);
     }
 
-    pub(crate) fn record_static_lookups(&self, state: MptState) {
-        self.stored_expressions_map.insert(state, self.base.get_static_lookups();
+    pub(crate) fn record_static_lookups(&mut self, state: LookupState) {
+        self.stored_expressions_map.insert(state, self.base.get_static_lookups());
         self.base.clear_static_lookups();
     }
 
@@ -941,7 +941,7 @@ impl<F: Field> MPTConstraintBuilder<F> {
     ) {
         self.base.add_static_lookup(
             &format!("FixedLookup {}", description), 
-            self.randomness.expect("Randomness unset for static lookup rlc."), 
+            self.randomness.as_ref().expect("Randomness unset for static lookup rlc.").clone(), 
             EvmCellType::Lookup(Table::Fixed), 
             vec![tag, val_1, val_2]);
     }
@@ -1177,7 +1177,7 @@ pub struct MainRLPGadget<F> {
 
 impl<F: Field> MainRLPGadget<F> {
     pub(crate) fn construct(cb: &mut MPTConstraintBuilder<F>, r: &Expression<F>) -> Self {
-       //- println!("_________ MainRLPGadget ________");
+       println!("_________ MainRLPGadget ________");
         let mut config = MainRLPGadget::default();
         config.bytes = cb.query_cells::<34>().to_vec();
         circuit!([meta, cb], {
@@ -1201,8 +1201,8 @@ impl<F: Field> MainRLPGadget<F> {
             config.mult_diff = cb.query_cell();
             let mult_diff = config.mult_diff.expr();
 
-           //- println!("cb.lookup_fixed: \n\tFixedTableTag::RLen.expr(): {:?}\n\tconfig.rlp.len(): {:?}\n\tmult_diff: {:?}", 
-                // <FixedTableTag as Expr<F>>::expr(&FixedTableTag::RMult).identifier(), config.rlp.len().identifier(), mult_diff.identifier());
+           println!("cb.lookup_fixed: \n\tFixedTableTag::RLen.expr(): {:?}\n\tconfig.rlp.len(): {:?}\n\tmult_diff: {:?}", 
+                <FixedTableTag as Expr<F>>::expr(&FixedTableTag::RMult).identifier(), config.rlp.len().identifier(), mult_diff.identifier());
 
 
             cb.lookup_fixed("main rlp length mult", FixedTableTag::RMult.expr(), config.rlp.num_bytes(), mult_diff.clone());
@@ -1245,7 +1245,7 @@ impl<F: Field> MainRLPGadget<F> {
             .assign(region, offset, rlp_witness.num_bytes().scalar())?;
         self.len
             .assign(region, offset, rlp_witness.len().scalar())?;
-       //- println!("assign RLPItemView.len {:?}", self.len.identifier());
+       println!("assign RLPItemView.len {:?}", self.len.identifier());
 
         self.mult_diff
             .assign(region, offset, pow::value(r, rlp_witness.num_bytes()))?;
@@ -1255,7 +1255,7 @@ impl<F: Field> MainRLPGadget<F> {
         self.rlc_rlp
             .assign(region, offset, rlp_witness.rlc_rlp(r))?;
 
-       //- println!("assign rlc_rlp {:?}", self.rlc_rlp.identifier());
+       println!("assign rlc_rlp {:?}", self.rlc_rlp.identifier());
         
         assign!(region, self.tag, offset => self.tag(is_nibbles).scalar())?;
 
@@ -1272,7 +1272,7 @@ impl<F: Field> MainRLPGadget<F> {
         circuit!([meta, cb.base], {
             require!(self.tag.rot(meta, rot) => self.tag(is_nibbles).expr());
         });
-       //- println!("create_view RLPItemView.len {:?}", self.len.rot(meta, rot).identifier());
+       println!("create_view RLPItemView.len {:?}", self.len.rot(meta, rot).identifier());
         RLPItemView {
             num_bytes: Some(self.num_bytes.rot(meta, rot)),
             len: Some(self.len.rot(meta, rot)),

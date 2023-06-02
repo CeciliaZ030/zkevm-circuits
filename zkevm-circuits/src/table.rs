@@ -1000,10 +1000,10 @@ impl KeccakTable {
         let mut keccak = Keccak::default();
         keccak.update(input);
         let output = keccak.digest();
-        // println!("keccak hash bytes: {:?}",
+        //println!("keccak hash bytes: {:?}",
         // Word::from_big_endian(output.as_slice()).to_le_bytes());
         let output_rlc = challenges.evm_word().map(|challenge| {
-            // println!("keccak output challenge: {:?}", challenge);
+            //println!("keccak output challenge: {:?}", challenge);
             rlc::value(
                 &if is_big_endian {
                     Word::from_big_endian(output.as_slice())
@@ -1073,7 +1073,7 @@ impl KeccakTable {
                                 offset,
                                 || value,
                             )?;
-                            // println!("keccak: {:?}", value);
+                            //println!("keccak: {:?}", value);
                         }
                         offset += 1;
                     }

@@ -16,7 +16,7 @@ use crate::{
     circuit,
     circuit_tools::{cell_manager::{Cell, EvmCellType}, cached_region::{CachedRegion, ChallengeSet}},
     mpt_circuit::{
-        helpers::{key_memory, parent_memory, Indexable, KeyData, ParentData},
+        helpers::{key_memory, parent_memory, Indexable, KeyData, ParentData, LookupState},
         witness_row::ExtensionBranchRowType,
         MPTConfig, MPTState,
     },
@@ -177,7 +177,7 @@ impl<F: Field> ExtensionBranchConfig<F> {
                 }}
             }
         });
-
+        cb.record_static_lookups(LookupState::Branch);
         config
     }
 

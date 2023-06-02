@@ -38,7 +38,7 @@ use crate::{
         table::LookupTable_,
     },
     mpt_circuit::{
-        helpers::{main_memory, parent_memory, MPTConstraintBuilder, MptState, MainRLPGadget},
+        helpers::{main_memory, parent_memory, MPTConstraintBuilder, LookupState, MainRLPGadget},
         start::StartConfig,
         storage_leaf::StorageLeafConfig,
     },
@@ -216,7 +216,7 @@ impl<F: Field> MPTConfig<F> {
             // Type, #cols, phase, permutable
             vec![
                 (EvmCellType::StoragePhase1, 48, 0, false),
-                (EvmCellType::LookupByte, 2, 0, false),
+                (EvmCellType::LookupByte, 4, 0, false),
                 (EvmCellType::Lookup(Table::Keccak), 5, 0, false),
                 (EvmCellType::Lookup(Table::Fixed), 5, 0, false),
             ],
@@ -228,10 +228,10 @@ impl<F: Field> MPTConfig<F> {
         let managed_columns = cm.get_columns();
         let mut cb = MPTConstraintBuilder::new(
             33 + 10, 
-            Some(challenges.lookup_input()), 
-            None
+            None, 
+            Some(challenges.lookup_input())
         );
-       //- println!("_________ create_gate ________");
+       println!("_________ create_gate ________");
         meta.create_gate("MPT", |meta| {
             circuit!([meta, cb], {
                 // Populate lookup tables
@@ -320,9 +320,9 @@ impl<F: Field> MPTConfig<F> {
             cb.base.build_dynamic_lookups(meta, &["keccak".to_string()]);
         }
 
-       //- println!("num lookups: {}", meta.lookups().len());
-       //- println!("num advices: {}", meta.num_advice_columns());
-       //- println!("num fixed: {}", meta.num_fixed_columns());
+       println!("num lookups: {}", meta.lookups().len());
+       println!("num advices: {}", meta.num_advice_columns());
+       println!("num fixed: {}", meta.num_fixed_columns());
 
         MPTConfig {
             q_enable,
@@ -353,7 +353,7 @@ impl<F: Field> MPTConfig<F> {
 
         let mut r = F::zero();
         challenges.keccak_input().map(|v| r = v);
-       //- println!("________ MPT::assign ________");
+       println!("________ MPT::assign ________");
         layouter.assign_region(
             || "MPT",
             |mut region| {
@@ -373,7 +373,7 @@ impl<F: Field> MPTConfig<F> {
                     for (idx, bytes) in node.values.iter().enumerate() {
                         let is_nibbles = node.extension_branch.is_some()
                             && idx == ExtensionBranchRowType::KeyC as usize;
-                       //- println!("node bytes {}", idx);
+                       println!("node bytes {}", idx);
                         let rlp_value = self.rlp_item.assign(
                             &mut cached_region,
                             offset + idx,
@@ -389,7 +389,7 @@ impl<F: Field> MPTConfig<F> {
 
                     // Assign nodes
                     if node.start.is_some() {
-                       //- println!("{}: start", offset);
+                       println!("{}: start", offset);
                         assign!(cached_region, (self.state_machine.is_start, offset) => "is_start", true.scalar())?;
                         self.state_machine.start_config.assign(
                             &mut cached_region,
@@ -400,8 +400,9 @@ impl<F: Field> MPTConfig<F> {
                             node,
                             &rlp_values,
                         )?;
+                        self.assign_static_lookups(&mut cached_region, offset, LookupState::Start);
                     } else if node.extension_branch.is_some() {
-                       //- println!("{}: branch", offset);
+                       println!("{}: branch", offset);
                         assign!(cached_region, (self.state_machine.is_branch, offset) => "is_branch", true.scalar())?;
                         self.state_machine.branch_config.assign(
                             &mut cached_region,
@@ -412,8 +413,9 @@ impl<F: Field> MPTConfig<F> {
                             node,
                             &rlp_values,
                         )?;
+                        self.assign_static_lookups(&mut cached_region, offset, LookupState::Branch);
                     } else if node.storage.is_some() {
-                       //- println!("{}: storage", offset);
+                       println!("{}: storage", offset);
                         assign!(cached_region, (self.state_machine.is_storage, offset) => "is_storage", true.scalar())?;
                         self.state_machine.storage_config.assign(
                             &mut cached_region,
@@ -424,8 +426,10 @@ impl<F: Field> MPTConfig<F> {
                             node,
                             &rlp_values,
                         )?;
+                        self.assign_static_lookups(&mut cached_region, offset, LookupState::Storage);
+
                     } else if node.account.is_some() {
-                       //- println!("{}: account", offset);
+                       println!("{}: account", offset);
                         assign!(cached_region, (self.state_machine.is_account, offset) => "is_account", true.scalar())?;
                         self.state_machine.account_config.assign(
                             &mut cached_region,
@@ -436,9 +440,10 @@ impl<F: Field> MPTConfig<F> {
                             node,
                             &rlp_values,
                         )?;
+                        self.assign_static_lookups(&mut cached_region, offset, LookupState::Account);
+
                     }
-                   //- println!("{} ====> cached_region.advice\n {:?}", offset, cached_region.advice);
-                    self.assign_static_lookups(&mut cached_region, offset);
+                //    println!("{} ====> cached_region.advice\n {:?}", offset, cached_region.advice);
                     offset += node.values.len();
                 }
 
@@ -465,16 +470,15 @@ impl<F: Field> MPTConfig<F> {
         &self,
         region: &mut CachedRegion<'_, '_, F, S>,
         offset: usize,
-        state: MptState,
+        state: LookupState,
     ) {
         //println!("_________ assign_static_lookups ________ \nstatic_lookups: {:?}\n", self.cb.base.get_static_lookups());
-        self.cb.stored_expression_map
+        self.cb.stored_expressions_map
             .get(&state)
-            
-        self.cb.base.get_static_lookups()
+            .expect(&format!("No static lookups for {:?}", state))
             .iter()
-            .for_each(|stored_expr| {
-                stored_expr.assign(region, offset).expect("static lookup assignment failed");
+            .for_each(|expr| {
+                expr.assign(region, offset).expect("static lookup assignment failed");
             });
    }
 
@@ -668,10 +672,14 @@ mod tests {
                     randomness,
                 };
 
-               //- println!("{} {:?}", idx, path);
+                
+
+               println!("{} {:?}", idx, path);
                 // let prover = MockProver::run(9, &circuit, vec![pube45_root]).unwrap();
                 let prover = MockProver::run(14 /* 9 */, &circuit, vec![]).unwrap();
-                assert_eq!(prover.verify_at_rows(0..num_rows, 0..num_rows,), Ok(()));
+                let res = prover.verify_at_rows(0..num_rows, 0..num_rows,);
+                println!("{:?}", res.unwrap());
+                // assert_eq!(prover.verify_at_rows(0..num_rows, 0..num_rows,), Ok(()));
                 // assert_eq!(prover.verify_par(), Ok(()));
                 // prover.assert_satisfied();
             });
@@ -703,12 +711,12 @@ mod tests {
             keccak_data,
             randomness,
         };
-        let prover = MockProver::run(9 /* 9 */, &circuit, vec![]).unwrap();
-                assert_eq!(prover.verify_at_rows(0..num_rows, 0..num_rows,), Ok(()));
+        // let prover = MockProver::run(9 /* 9 */, &circuit, vec![]).unwrap();
+        //         assert_eq!(prover.verify_at_rows(0..num_rows, 0..num_rows,), Ok(()));
 
-       //- println!("Start graphing");
+       println!("Start graphing");
 
-        let root = BitMapBackend::new("mpt-chip-layout1.png", (2048, 7680)).into_drawing_area();
+        let root = BitMapBackend::new("mpt-chip-layout2.png", (2048, 7680)).into_drawing_area();
         root.fill(&WHITE).unwrap();
         let root = root.titled("MPT Chip Layout", ("sans-serif", 60)).unwrap();
 

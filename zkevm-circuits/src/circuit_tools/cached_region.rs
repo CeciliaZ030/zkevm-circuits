@@ -122,7 +122,7 @@ impl<'r, 'b, F: Field, S: ChallengeSet<F>> CachedRegion<'r, 'b, F, S> {
     }
 
     pub fn get_advice(&self, row_index: usize, column_index: usize, rotation: Rotation) -> F {
-       //- println!("\t get_advice: [{}][{}]", column_index, rotation.0 as usize + row_index);
+       println!("\t get_advice: [{}][{}]", column_index, rotation.0 as usize + row_index);
         self.advice.get(&(column_index, row_index + rotation.0 as usize))
             .expect("Advice not found")
             .clone()
@@ -210,7 +210,7 @@ impl<F: Field, C: CellTypeTrait> StoredExpression<F, C>  {
             &|a, scalar| a * Value::known(scalar),
         );
         self.cell.assign_value(region, offset, value)?;
-       //- println!("evaluated value: {:?}", value);
+       println!("evaluated value: {:?}", value);
         Ok(value)
     }
 }

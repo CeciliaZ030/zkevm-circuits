@@ -16,7 +16,7 @@ use crate::{
     mpt_circuit::{
         helpers::{
             key_memory, main_memory, num_nibbles, parent_memory, DriftedGadget, IsEmptyTreeGadget,
-            KeyData, MPTConstraintBuilder, MainData, ParentData, ParentDataWitness,
+            KeyData, MPTConstraintBuilder, MainData, ParentData, ParentDataWitness, LookupState,
         },
         param::KEY_LEN_IN_NIBBLES,
         MPTConfig, MPTContext, MPTState,
@@ -253,7 +253,7 @@ impl<F: Field> StorageLeafConfig<F> {
                 config.main_data.root.expr(),
             );
         });
-
+        cb.record_static_lookups(LookupState::Storage);
         config
     }
 
