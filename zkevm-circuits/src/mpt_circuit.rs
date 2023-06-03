@@ -473,13 +473,11 @@ impl<F: Field> MPTConfig<F> {
         state: LookupState,
     ) {
         //println!("_________ assign_static_lookups ________ \nstatic_lookups: {:?}\n", self.cb.base.get_static_lookups());
-        self.cb.stored_expressions_map
-            .get(&state)
-            .expect(&format!("No static lookups for {:?}", state))
-            .iter()
-            .for_each(|expr| {
+        if let Some(lookups) = self.cb.stored_expressions_map.get(&state) {
+            for expr in lookups.iter() {
                 expr.assign(region, offset).expect("static lookup assignment failed");
-            });
+            }
+        }        
    }
 
 

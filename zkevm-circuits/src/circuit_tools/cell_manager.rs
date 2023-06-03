@@ -1,20 +1,30 @@
 //! Cell manager
-use crate::evm_circuit::table::Table;
-use crate::util::{Expr, query_expression};
-use crate::circuit_tools::{table::LookupTable_, cached_region::{CachedRegion, ChallengeSet}};
+use crate::{
+    circuit_tools::{
+        cached_region::{CachedRegion, ChallengeSet},
+        table::LookupTable_,
+    },
+    evm_circuit::table::Table,
+    util::{query_expression, Expr},
+};
 
 use eth_types::Field;
-use halo2_proofs::plonk::{Any, SecondPhase, ThirdPhase, FirstPhase, Phase};
 use halo2_proofs::{
+    arithmetic::FieldExt,
     circuit::{AssignedCell, Value},
-    plonk::{ConstraintSystem, Advice, Column, Error, Expression, VirtualCells},
+    plonk::{
+        Advice, Any, Column, ConstraintSystem, Error, Expression, FirstPhase, Phase, SecondPhase,
+        ThirdPhase, VirtualCells,
+    },
     poly::Rotation,
 };
-use halo2_proofs::arithmetic::FieldExt;
-use std::cell;
-use std::collections::{BTreeMap, HashMap};
-use std::fmt::Debug;
-use std::hash::Hash;
+use itertools::Itertools;
+use std::{
+    cell,
+    collections::{BTreeMap, HashMap},
+    fmt::Debug,
+    hash::Hash, cmp,
+};
 use strum_macros::EnumIter;
 
 #[derive(Clone, Debug, Default)]
@@ -26,20 +36,14 @@ pub(crate) struct Cell<F> {
     pub rotation: usize,
 }
 
-
 impl<F: Field> Cell<F> {
-    pub(crate) fn new(
-        meta: &mut VirtualCells<F>,
-        column: Column<Advice>,
-        rotation: usize,
-    ) -> Self {
+    pub(crate) fn new(meta: &mut VirtualCells<F>, column: Column<Advice>, rotation: usize) -> Self {
         Self {
             expression: Some(meta.query_advice(column, Rotation(rotation as i32))),
             column: Some(column),
             rotation,
         }
     }
-
 
     pub(crate) fn assign<S: ChallengeSet<F>>(
         &self,
@@ -70,7 +74,8 @@ impl<F: Field> Cell<F> {
             || {
                 format!(
                     "Cell column: {:?} and rotation: {}",
-                    self.column.unwrap(), self.rotation
+                    self.column.unwrap(),
+                    self.rotation
                 )
             },
             self.column.unwrap(),
@@ -145,6 +150,15 @@ pub struct CellConfig<C: CellTypeTrait> {
     pub is_permute: bool,
 }
 
+#[derive(Clone, Debug)]
+pub struct _CellConfig<F, C: CellTypeTrait> {
+    cell_type: C,
+    cell_columns: Vec<CellColumn_<F, C>>,
+    max_height: usize,
+    phase: u8,
+    is_permute: bool,
+}
+
 impl<C: CellTypeTrait> From<(C, usize, u8, bool)> for CellConfig<C> {
     fn from((cell_type, num_columns, phase, is_permute): (C, usize, u8, bool)) -> Self {
         Self {
@@ -157,7 +171,7 @@ impl<C: CellTypeTrait> From<(C, usize, u8, bool)> for CellConfig<C> {
 }
 
 impl<C: CellTypeTrait> CellConfig<C> {
-    pub fn init_columns<F: Field>(&self, meta: &mut ConstraintSystem<F>) -> Vec<Column<Advice>>{
+    pub fn init_columns<F: Field>(&self, meta: &mut ConstraintSystem<F>) -> Vec<Column<Advice>> {
         let mut columns = Vec::with_capacity(self.num_columns);
         for _ in 0..self.num_columns {
             let tmp = match self.phase {
@@ -169,15 +183,17 @@ impl<C: CellTypeTrait> CellConfig<C> {
             columns.push(tmp);
         }
         if self.is_permute {
-            let _ = columns.iter().map(|c| meta.enable_equality(c.clone())).collect::<Vec<()>>();
+            let _ = columns
+                .iter()
+                .map(|c| meta.enable_equality(c.clone()))
+                .collect::<Vec<()>>();
         }
         columns
     }
 }
 
-
-pub trait CellTypeTrait: 
-    Clone + Copy + Debug + PartialEq + Eq + PartialOrd + Ord + Hash + Default 
+pub trait CellTypeTrait:
+    Clone + Copy + Debug + PartialEq + Eq + PartialOrd + Ord + Hash + Default
 {
     fn byte_type() -> Option<Self>;
 
@@ -202,8 +218,6 @@ pub trait CellTypeTrait:
     }
 }
 
-
-
 /// this new cell manager has been in the planning for some time https://github.com/privacy-scaling-explorations/zkevm-circuits/issues/1203
 /// Chiquito has a cell manager that is more abstracted out even: https://github.com/privacy-scaling-explorations/chiquito/blob/main/src/compiler/cell_manager.rs
 
@@ -216,7 +230,6 @@ pub(crate) struct CellColumn_<F, C> {
     pub(crate) expr: Expression<F>,
 }
 
-
 #[derive(Clone, Debug)]
 pub struct CellManager_<F, C: CellTypeTrait> {
     // cell_type -> (start_width, cell_list)
@@ -228,8 +241,243 @@ pub struct CellManager_<F, C: CellTypeTrait> {
     total_width: usize,
 }
 
+#[derive(Clone, Debug)]
+pub struct CellManager<F, C: CellTypeTrait> {
+    cells: HashMap<C, Vec<Cell<F>>>,
+    cell_configs: Vec<_CellConfig<F, C>>,
+    offset: usize,
+}
+
+impl<F: Field, C: CellTypeTrait> CellManager<F, C> {
+    pub(crate) fn new(
+        meta: &mut ConstraintSystem<F>,
+        cell_configs: Vec<(C, usize, usize, u8, bool)>,
+        tables: Vec<&dyn LookupTable_<F, TableCellType = C>>,
+        offset: usize,
+    ) -> Self {
+        let mut make_cell_config = |config: (C, usize, usize, u8, bool)| -> _CellConfig<F, C>{
+            let cell_columns = (0..config.1).map(|index| {
+                CellColumn_ {
+                    column: match config.2 {
+                        0 => meta.advice_column_in(FirstPhase),
+                        1 => meta.advice_column_in(SecondPhase),
+                        2 => meta.advice_column_in(ThirdPhase),
+                        _ => unreachable!(),
+                    },
+                    index,
+                    cell_type: config.0,
+                    height: 0,
+                    expr: Expression::Constant(F::zero()),
+                }
+            }).collect::<Vec<_>>();
+            _CellConfig {
+                cell_type: config.0,
+                cell_columns,
+                max_height: config.2,
+                phase: config.3,
+                is_permute: config.4,
+            }
+        };
+
+        let mut cell_configs = cell_configs
+            .into_iter()
+            .map(|c| make_cell_config(c))
+            .collect::<Vec<_>>();
+
+        // User need to put fixed columns after advice if have any
+        // permutation is not enable by default
+        for table in tables {
+            let (cell_type, cnt, max_height, phase, is_permute) = (
+                table.get_type_(),
+                table.columns().len(),
+                1,
+                table.phase(),
+                false,
+            );
+            cell_configs.push(make_cell_config((cell_type, cnt, max_height, phase, is_permute)));
+        }
+
+        let mut cells = HashMap::new();
+        cell_configs.iter().for_each(|c| {
+            let width = c.cell_columns.len();
+            let mut cell_list = Vec::with_capacity(c.cell_columns.len() * c.max_height);
+            query_expression(meta, |meta| {
+                // println!("c.cell_columns.len() init {} * {}", cols.len(), max_height);
+                for w in 0..width {
+                    for h in 0..c.max_height {
+                        let cell: Cell<_> = Cell::new(meta, c.cell_columns[w].column, offset + h);
+                        cell_list.push(cell);
+                    }
+                }
+            });
+            cells.insert(c.cell_type, cell_list);
+        });
+
+        Self {
+            cells,
+            cell_configs,
+            offset,
+
+        }
+    }
+
+    pub(crate) fn advice_columns(&self) -> Vec<Column<Advice>> {
+        self.cell_configs
+            .iter()
+            .fold(Vec::new(), |mut acc, c| {
+                c.cell_columns
+                    .iter()
+                    .for_each(|col| acc.push(col.column));
+                acc
+            })
+    }
+
+    pub(crate) fn cell_columns(&self) -> Vec<CellColumn_<F, C>> {
+        self.cell_configs
+            .iter()
+            .fold(Vec::new(), |mut acc, c| {
+                acc.extend(c.cell_columns.clone());
+                acc
+            })
+    }
+
+    /// Get all advice columns of given type
+    pub(crate) fn typed_columns(&self, cell_type: C) -> Vec<Column<Advice>> {
+        self.cell_configs
+            .iter()
+            .filter(|c| c.cell_type == cell_type)
+            .fold(Vec::new(), |mut acc, c| {
+                c.cell_columns
+                    .iter()
+                    .for_each(|col| acc.push(col.column));
+                acc
+            })
+    }
+
+    pub(crate) fn total_width(&self) -> usize {
+        self.cell_configs
+        .iter()
+        .fold(0, |mut cnt, c| {
+            cnt += c.cell_columns.len();
+            cnt
+        })
+    }
+
+    pub(crate) fn total_max_height(&self) -> usize {
+        self.cell_configs
+        .iter()
+        .fold(0, |mut max, c| {
+            max = cmp::max(max, c.max_height);
+            max
+        })
+    }
+
+    pub(crate) fn get_offset(&self) -> usize {
+        self.offset
+    }
+
+    pub(crate) fn get_config(&mut self, cell_type: C) -> &mut _CellConfig<F, C> {
+        self.cell_configs
+            .iter_mut()
+            .find(|c| c.cell_type == cell_type)
+            .expect(&format!("Cell type {:?} not found", cell_type))
+    }
+
+    pub(crate) fn set_config_max_height(
+        &mut self, 
+        meta: &mut VirtualCells<F>,
+        config_idx: usize, 
+        new_height: usize
+    ) {
+        let config = &mut self.cell_configs[config_idx];
+        let cell_list = self.cells.get_mut(&config.cell_type).unwrap();
+        
+        let width = config.cell_columns.len();
+        let mut tmp = Vec::with_capacity(width * new_height);
+        for w in 0..width {
+            if new_height < config.max_height {
+                tmp.extend_from_slice(
+                    &cell_list[w * config.max_height..w * config.max_height + new_height],
+                );
+            } else {
+                tmp.extend_from_slice(
+                    &cell_list[w * config.max_height..w * config.max_height + config.max_height],
+                );
+                let col = config.cell_columns[w].column;
+                tmp.extend(
+                    (config.max_height..new_height)
+                        .map(|h| Cell::new(meta, col, self.offset + h)),
+                );
+            }
+        }
+        self.cells.insert(config.cell_type, tmp);
+        config.max_height = new_height;
+    }
+
+
+    pub(crate) fn reset_configs(
+        &mut self, 
+        meta: &mut VirtualCells<F>,
+        new_height: usize
+    ) {
+        for i in 0..self.cell_configs.len() {
+            self.cell_configs[i].cell_columns
+                .iter_mut()
+                .for_each(|col| col.height = 0);
+            self.set_config_max_height(meta, i, new_height);
+        }
+    }
+
+    pub(crate) fn query_cells(&mut self, cell_type: C, count: usize) -> Vec<Cell<F>> {
+        let mut targets = Vec::with_capacity(count);
+        let cell_list = self
+            .cells
+            .get(&cell_type)
+            .expect(&format!("Cell type {:?} not found", cell_type))
+            .clone();
+
+        self.cell_configs
+            .iter_mut()
+            .for_each(|c| {
+                if c.cell_type == cell_type {
+                    while targets.len() < count {
+                        // Search best cell in window of columns designated for this CellType
+                        let (index, height) =
+                            Self::next_column(cell_type, &c.cell_columns);
+                        targets.push(cell_list[index * c.max_height + height].clone());
+                        c.cell_columns[index].height += 1;
+                    }
+                }
+            });
+        targets
+    }
+
+    pub(crate) fn query_cell(&mut self, cell_type: C) -> Cell<F> {
+        self.query_cells(cell_type, 1)[0].clone()
+    }
+
+    fn next_column(cell_type: C, columns: &[CellColumn_<F, C>]) -> (usize, usize) {
+        let mut best_pos: Option<(usize, usize)> = None;
+        let mut best_height = columns[0].height;
+        for column in columns.iter() {
+            assert!(column.cell_type == cell_type);
+            if column.height < best_height {
+                best_pos = Some((column.index, column.height));
+                best_height = column.height;
+            }
+        }
+        match best_pos {
+            Some(pos) => pos,
+            // If we reach this case, it means that all the columns of cell_type have assignments
+            // taking self.height rows, so there's no more space.
+            None => panic!("not enough cells for query: {:?}", cell_type),
+        }
+    }
+
+}
+
+
 impl<F: Field, C: CellTypeTrait> CellManager_<F, C> {
-    
     pub(crate) fn new(
         meta: &mut ConstraintSystem<F>,
         cell_configs: Vec<(C, usize, u8, bool)>,
@@ -237,12 +485,14 @@ impl<F: Field, C: CellTypeTrait> CellManager_<F, C> {
         offset: usize,
         max_height: usize,
     ) -> Self {
-
         let mut cells = HashMap::new();
         let mut cell_columns = Vec::new();
         let mut total_width = 0;
 
-        let mut cell_configs = cell_configs.into_iter().map(|c| c.into()).collect::<Vec<_>>();
+        let mut cell_configs = cell_configs
+            .into_iter()
+            .map(|c| c.into())
+            .collect::<Vec<_>>();
 
         // User need to put fixed columns after advice if have any
         // permutation is not enable by default
@@ -253,34 +503,33 @@ impl<F: Field, C: CellTypeTrait> CellManager_<F, C> {
                 phase: table.phase(),
                 is_permute: false,
             });
-        };
+        }
 
-        //println!("\nInitiating cm:");
-        cell_configs
-            .iter()
-            .for_each(|c| {
-                let cols = c.init_columns(meta);
-                let mut cell_list = Vec::with_capacity(cols.len() * max_height);
-                query_expression(meta, |meta| {
-                    //println!("cols.len() init {} * {}", cols.len(), max_height);
-                    for w in 0..cols.len() {
-                        for h in 0..max_height {
-                            let cell: Cell<_> = Cell::new(meta, cols[w], offset + h);
-                            cell_list.push(cell);
-                        }
-                        cell_columns.push(CellColumn_ {
-                            column: cols[w],
-                            index: w,
-                            cell_type: c.cell_type,
-                            height: 0,
-                            expr: cell_list[cell_list.len()-1].expr().clone(),
-                        });
+        // println!("\nInitiating cm:");
+        cell_configs.iter().for_each(|c| {
+            let cols = c.init_columns(meta);
+            let mut cell_list = Vec::with_capacity(cols.len() * max_height);
+            query_expression(meta, |meta| {
+                // println!("cols.len() init {} * {}", cols.len(), max_height);
+                for w in 0..cols.len() {
+                    for h in 0..max_height {
+                        let cell: Cell<_> = Cell::new(meta, cols[w], offset + h);
+                        cell_list.push(cell);
                     }
-                });
-                cells.insert(c.cell_type, (total_width, cell_list.clone()));
-                //println!("cell type {:?} start with {} for window {}, cell_list {}", c.cell_type, total_width, c.num_columns, cell_list.len());
-                total_width += cols.len();
+                    cell_columns.push(CellColumn_ {
+                        column: cols[w],
+                        index: w,
+                        cell_type: c.cell_type,
+                        height: 0,
+                        expr: cell_list[cell_list.len() - 1].expr().clone(),
+                    });
+                }
             });
+            cells.insert(c.cell_type, (total_width, cell_list.clone()));
+            // println!("cell type {:?} start with {} for window {}, cell_list {}", c.cell_type,
+            // total_width, c.num_columns, cell_list.len());
+            total_width += cols.len();
+        });
 
         Self {
             cells,
@@ -293,10 +542,7 @@ impl<F: Field, C: CellTypeTrait> CellManager_<F, C> {
     }
 
     pub(crate) fn get_columns(&self) -> Vec<Column<Advice>> {
-        self.columns
-            .iter()
-            .map(|c| c.column.clone())
-            .collect()
+        self.columns.iter().map(|c| c.column.clone()).collect()
     }
 
     pub(crate) fn cell_columns(&self) -> &Vec<CellColumn_<F, C>> {
@@ -324,24 +570,28 @@ impl<F: Field, C: CellTypeTrait> CellManager_<F, C> {
                 let mut tmp = Vec::with_capacity(window * max_height);
                 for w in 0..window {
                     if max_height < self.max_height {
-                        //println!("\n-- set_max_height: {} -> {}", self.max_height, max_height);
-                        tmp.extend_from_slice(&cells[w * self.max_height..w * self.max_height + max_height]);
+                        // println!("\n-- set_max_height: {} -> {}", self.max_height, max_height);
+                        tmp.extend_from_slice(
+                            &cells[w * self.max_height..w * self.max_height + max_height],
+                        );
                     } else {
-                        //println!("\n++ set_max_height: {} -> {}", self.max_height, max_height);
-                        tmp.extend_from_slice(&cells[w * self.max_height..w * self.max_height + self.max_height]);
-                        //print!("    tmp.len() {} -> ", tmp.len());
+                        // println!("\n++ set_max_height: {} -> {}", self.max_height, max_height);
+                        tmp.extend_from_slice(
+                            &cells[w * self.max_height..w * self.max_height + self.max_height],
+                        );
+                        // print!("    tmp.len() {} -> ", tmp.len());
                         let col = tmp.last().unwrap().column();
                         tmp.extend(
-                                (self.max_height..max_height)
-                                .map(|h| Cell::new(meta, col, self.offset + h))
-                            );
-                        //print!("{} ", tmp.len());
+                            (self.max_height..max_height)
+                                .map(|h| Cell::new(meta, col, self.offset + h)),
+                        );
+                        // print!("{} ", tmp.len());
                     }
                 }
-                //println!("added cells for {:?} to {}", cell_type, tmp.len());
+                // println!("added cells for {:?} to {}", cell_type, tmp.len());
                 new_cells.insert(*cell_type, (*start_width, tmp));
             });
-            self.cells = new_cells;
+        self.cells = new_cells;
         self.max_height = max_height;
     }
 
@@ -382,14 +632,16 @@ impl<F: Field, C: CellTypeTrait> CellManager_<F, C> {
 
     pub(crate) fn query_cells(&mut self, cell_type: C, count: usize) -> Vec<Cell<F>> {
         let mut targets = Vec::with_capacity(count);
-        let (start_width, cell_list) = self.cells
+        let (start_width, cell_list) = self
+            .cells
             .get(&cell_type)
             .expect(&format!("Cell type {:?} not found", cell_type));
-        let window = self.get_config(cell_type).num_columns;        
+        let window = self.get_config(cell_type).num_columns;
 
         while targets.len() < count {
             // Search best cell in window of columns designated for this CellType
-            let (index, height) = self.next_column(cell_type, &self.columns[*start_width..start_width + window]);
+            let (index, height) =
+                self.next_column(cell_type, &self.columns[*start_width..start_width + window]);
             targets.push(cell_list[index * self.max_height + height].clone());
             //////- println!("at ({} * {} + {})", index, self.max_height, height);
             self.columns[start_width + index].height += 1;
@@ -411,7 +663,7 @@ impl<F: Field, C: CellTypeTrait> CellManager_<F, C> {
                 best_height = column.height;
             }
         }
-        //println!("best pos: {:?}", best_pos);
+        // println!("best pos: {:?}", best_pos);
         match best_pos {
             Some(pos) => pos,
             // If we reach this case, it means that all the columns of cell_type have assignments
@@ -420,4 +672,3 @@ impl<F: Field, C: CellTypeTrait> CellManager_<F, C> {
         }
     }
 }
-
