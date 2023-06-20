@@ -1210,19 +1210,119 @@ impl<F: Field> WrongGadget<F> {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct MinEncodeGadget<F> {
+    is_node: IsEqualGadget<F>,
+    is_value: IsEqualGadget<F>,
+    is_hash: IsEqualGadget<F>,
+    is_key: IsEqualGadget<F>,
+    max_len: Cell<F>,
+    max_len_cap: LtGadget<F, 1>,
+    leading_non_zero: LtGadget<F, 1>,
+}
+
+impl<F: Field> MinEncodeGadget<F> {
+    pub(crate) fn cosntruct(
+        cb: &mut MPTConstraintBuilder<F>, 
+        item_type: &Cell<F>,
+        item: &RLPItemGadget<F>,
+    ) -> Self {
+        circuit!([meta, cb], {
+            let mut config = MinEncodeGadget::default();
+            config.is_node = IsEqualGadget::construct(&mut cb.base, item_type.expr(), (RlpItemType::Node as usize).expr());
+            config.is_value =  IsEqualGadget::construct(&mut cb.base, item_type.expr(), (RlpItemType::Value as usize).expr());
+            config.is_hash = IsEqualGadget::construct(&mut cb.base, item_type.expr(), (RlpItemType::Hash as usize).expr());
+            config.is_key = IsEqualGadget::construct(&mut cb.base, item_type.expr(), (RlpItemType::Key as usize).expr());
+            
+            config.max_len = cb.query_cell();
+            config.max_len_cap = LtGadget::construct(&mut cb.base, item.len(), config.max_len.expr() + 1.expr());
+            
+            matchx! {
+                 // Node (string with len == 0 or 32, OR list with len <= 31)
+                config.is_node.expr() => {
+                   ifx!{item.is_string() => {
+                        require!(item.len() => [0, HASH_WIDTH]);
+                    } elsex {
+                        require!(config.max_len.expr() => HASH_WIDTH - 1);
+                    }}
+                },
+                 // Value (string with len <= 32), minimum rlp encoded without leading zeros
+                config.is_value.expr() => {
+                    require!(item.is_string() => true);
+                    config.leading_non_zero = LtGadget::construct(&mut cb.base, 0.expr(), item.value.bytes[1].expr());
+                    require!(config.leading_non_zero => true);
+                },
+                // Hash (string with len == 32)
+                config.is_hash.expr() => {
+                    require!(item.is_string() => true);
+                    require!(item.len() => HASH_WIDTH);
+                },
+                // Key (string with len <= 33)
+                config.is_key.expr() => {
+                    require!(item.is_string() => true);
+                },
+            }
+            config
+        })
+    }
+
+    pub(crate) fn assign<S: ChallengeSet<F>>(
+        &self,
+        region: &mut CachedRegion<'_, '_, F, S>,
+        offset: usize,
+        item_type: RlpItemType,
+        item: RLPItemWitness,
+    ) -> Result<(), Error> {
+        let item_type_scalar = (item_type as usize).scalar();
+        let max_length = if item_type == RlpItemType::Node && item.is_list() {
+            (HASH_WIDTH - 1).scalar()
+        } else {
+            Self::max_length(item_type).scalar()
+        };
+        self.is_node.assign(region, offset, item_type_scalar, (RlpItemType::Node as usize).scalar())?;
+        self.is_value.assign(region, offset, item_type_scalar, (RlpItemType::Value as usize).scalar())?;
+        self.is_hash.assign(region, offset, item_type_scalar, (RlpItemType::Hash as usize).scalar())?;
+        self.is_key.assign(region, offset, item_type_scalar, (RlpItemType::Key as usize).scalar())?;
+
+        self.max_len.assign(region, offset, max_length)?;
+        self.max_len_cap.assign(region, offset, item.len().scalar(), max_length)?;
+
+        // only need to check leading non zero for RlpItemType::Value
+        if item_type == RlpItemType::Value {
+            self.leading_non_zero.assign(region, offset, 0u8.scalar(), item.value.bytes[1].scalar())?;
+        }
+
+        Ok(())
+    }
+
+    pub fn max_length(item_type: RlpItemType) -> usize {
+        match item_type {
+            RlpItemType::Node => 32,
+            RlpItemType::Value => 32,
+            RlpItemType::Hash => 32,
+            RlpItemType::Key => 33,
+            RlpItemType::Nibbles => 32,
+        }
+    }
+}
+
 /// Main RLP item
 #[derive(Clone, Debug, Default)]
 pub struct MainRLPGadget<F> {
     bytes: Vec<Cell<F>>,
     rlp: RLPItemGadget<F>,
-    below_limit: LtGadget<F, 1>,
+    // below_limit: LtGadget<F, 1>,
+    // minimal_encoded: LtGadget<F, 1>,
     num_bytes: Cell<F>,
     len: Cell<F>,
     mult_diff: Cell<F>,
     rlc_content: Cell<F>,
     rlc_rlp: Cell<F>,
     tag: Cell<F>,
-    max_len: Cell<F>,
+    // max_len: Cell<F>,
+
+    item_type: Cell<F>,
+    min_encode: MinEncodeGadget<F>
 }
 
 impl<F: Field> MainRLPGadget<F> {
@@ -1235,14 +1335,18 @@ impl<F: Field> MainRLPGadget<F> {
             let mut config = MainRLPGadget {
                 bytes: cb.query_cells::<RLP_UNIT_NUM_BYTES>().to_vec(),
                 rlp: RLPItemGadget::default(),
-                below_limit: LtGadget::default(),
+                // below_limit: LtGadget::default(),
+                // minimal_encoded: LtGadget::default(),
                 num_bytes: cb.query_cell(),
                 len: cb.query_cell(),
                 mult_diff: cb.query_cell(),
                 rlc_content: cb.query_cell(),
                 rlc_rlp: cb.query_cell(),
                 tag: cb.query_cell(),
-                max_len: cb.query_cell(),
+                // max_len: cb.query_cell(),
+
+                item_type: cb.query_cell(),
+                min_encode: MinEncodeGadget::default(),
             };
 
             // Decode the RLP item
@@ -1254,14 +1358,22 @@ impl<F: Field> MainRLPGadget<F> {
                     .map(|byte| byte.expr())
                     .collect::<Vec<_>>(),
             );
+            config.min_encode = MinEncodeGadget::cosntruct(cb, &config.item_type, &config.rlp);
 
             // Make sure the RLP item is within a valid range
-            config.below_limit = LtGadget::construct(
-                &mut cb.base,
-                config.rlp.len(),
-                config.max_len.expr() + 1.expr(),
-            );
-            require!(config.below_limit.expr() => true);
+            // config.below_limit = LtGadget::construct(
+            //     &mut cb.base,
+            //     config.rlp.len(),
+            //     config.max_len.expr() + 1.expr(),
+            // );
+            // require!(config.below_limit.expr() => true);
+
+            // ifx!( config.tag.expr() )
+            // config.minimal_encoded = LtGadget::construct(
+            //     &mut cb.base, 
+            //     0.expr(), 
+            //     config.rlp.value.bytes[1].expr()
+            // );
 
             // Store RLP properties for easy access
             require!(config.num_bytes => config.rlp.num_bytes());
@@ -1272,7 +1384,7 @@ impl<F: Field> MainRLPGadget<F> {
             require!((FixedTableTag::RMult, config.rlp.num_bytes(), mult_diff) => @FIXED);
             // `tag` and `max_len` are "free" input that needs to be constrained externally!
 
-            // Range/zero checks
+            // Range/zero checksz
             // These range checks ensure that the value in the RLP columns are all byte
             // value. These lookups also enforce the byte value to be zero when
             // the byte index >= num_bytes.
@@ -1315,24 +1427,30 @@ impl<F: Field> MainRLPGadget<F> {
 
         // Decode the RLP item
         let rlp_witness = self.rlp.assign(region, offset, bytes)?;
-
+        
+        // self.minimal_encoded.assign(region, offset, 0.scalar(), bytes[1].scalar())?;
+        if rlp_witness.is_string() && rlp_witness.is_long() {
+            println!("assing min {:?}", bytes);
+        }
         // Make sure the RLP item is within a valid range
-        let max_len = if item_type == RlpItemType::Node {
-            if rlp_witness.is_string() {
-                self.max_length(item_type)
-            } else {
-                HASH_WIDTH - 1
-            }
-        } else {
-            self.max_length(item_type)
-        };
-        self.max_len.assign(region, offset, max_len.scalar())?;
-        self.below_limit.assign(
-            region,
-            offset,
-            rlp_witness.len().scalar(),
-            (max_len + 1).scalar(),
-        )?;
+        // let max_len = if item_type == RlpItemType::Node {
+        //     if rlp_witness.is_string() {
+        //         self.max_length(item_type)
+        //     } else {
+        //         HASH_WIDTH - 1
+        //     }
+        // } else {
+        //     self.max_length(item_type)
+        // };
+
+        // self.max_len.assign(region, offset, max_len.scalar())?;
+        // self.below_limit.assign(
+        //     region,
+        //     offset,
+        //     rlp_witness.len().scalar(),
+        //     (max_len + 1).scalar(),
+        // )?;
+
 
         // Store RLP properties for easy access
         self.num_bytes
@@ -1362,30 +1480,33 @@ impl<F: Field> MainRLPGadget<F> {
         circuit!([meta, cb.base], {
             let is_string = self.rlp.is_string_at(meta, rot);
             let tag = self.tag.rot(meta, rot);
-            let max_len = self.max_len.rot(meta, rot);
+            // let max_len = self.max_len.rot(meta, rot);
             let len = self.len.rot(meta, rot);
 
             // Check the tag value
             require!(tag => self.tag(item_type).expr());
-            // Check the is_string value
-            if item_type == RlpItemType::Value || item_type == RlpItemType::Key {
-                require!(is_string => true);
-            }
-            // Hashes always have length 32
-            if item_type == RlpItemType::Hash {
-                require!(len => HASH_WIDTH);
-            }
-            if item_type == RlpItemType::Node {
-                // Nodes always have length 0 or 32 when a string, or are < 32 when a list
-                ifx! {is_string => {
-                    require!(max_len => self.max_length(item_type).expr());
-                    require!(len => [0, HASH_WIDTH]);
-                } elsex {
-                    require!(max_len => HASH_WIDTH - 1);
-                }}
-            } else {
-                require!(max_len => self.max_length(item_type).expr());
-            }
+            require!(self.item_type => (item_type as usize).expr());
+            require!(self.min_encode.max_len => self.max_length(item_type).expr());
+
+            // if item_type == RlpItemType::Value || item_type == RlpItemType::Key {
+            //     require!(is_string => true);
+            // }
+            // // Hashes always have length 32
+            // if item_type == RlpItemType::Hash {
+            //     require!(is_string => true);
+            //     require!(len => HASH_WIDTH);
+            // }
+            // if item_type == RlpItemType::Node {
+            //     // Nodes always have length 0 or 32 when a string, or are < 32 when a list
+            //     ifx! {is_string => {
+            //         require!(max_len => self.max_length(item_type).expr());
+            //     } elsex {
+            //         require!(max_len => HASH_WIDTH - 1);
+            //         require!(self.minimal_encoded.expr() => true);
+            //     }}
+            // } else {
+            //     require!(max_len => self.max_length(item_type).expr());
+            // }
         });
         RLPItemView {
             num_bytes: Some(self.num_bytes.rot(meta, rot)),
@@ -1407,7 +1528,7 @@ impl<F: Field> MainRLPGadget<F> {
         }
     }
 
-    fn max_length(&self, item_type: RlpItemType) -> usize {
+    pub fn max_length(&self, item_type: RlpItemType) -> usize {
         match item_type {
             RlpItemType::Node => 32,
             RlpItemType::Value => 32,
