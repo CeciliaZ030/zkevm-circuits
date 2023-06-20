@@ -256,10 +256,10 @@ impl<F: Field> MPTConfig<F> {
             meta,
             // Type, #cols, phase, permutable
             vec![
-                (MptCellType::StoragePhase1, 60, 0, false),
+                (MptCellType::StoragePhase1, 66, 0, false),
                 (MptCellType::StoragePhase2, 5, 0, false),
                 (MptCellType::Lookup(Table::Fixed), 3, 0, false),
-                (MptCellType::LookupByte, 5, 0, false),
+                (MptCellType::LookupByte, 8, 0, false),
             ],
             0,
             1,
