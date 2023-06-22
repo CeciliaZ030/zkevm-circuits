@@ -1351,12 +1351,12 @@ impl<F: Field> MainRLPGadget<F> {
         // Make sure the RLP item is within a valid range
         let max_len = if item_type == RlpItemType::Node {
             if rlp_witness.is_string() {
-                self.max_length(item_type)
+                Self::max_length(item_type)
             } else {
                 HASH_WIDTH - 1
             }
         } else {
-            self.max_length(item_type)
+            Self::max_length(item_type)
         };
         self.max_len.assign(region, offset, max_len.scalar())?;
 
@@ -1409,13 +1409,13 @@ impl<F: Field> MainRLPGadget<F> {
         }
     }
 
-    pub fn max_length(&self, item_type: RlpItemType) -> usize {
+    pub fn max_length(item_type: RlpItemType) -> usize {
         match item_type {
-            RlpItemType::Node => 32,
-            RlpItemType::Value => 32,
-            RlpItemType::Hash => 32,
-            RlpItemType::Key => 33,
-            RlpItemType::Nibbles => 32,
+            RlpItemType::Node => 33,
+            RlpItemType::Value => 33,
+            RlpItemType::Hash => 33,
+            RlpItemType::Key => 34,
+            RlpItemType::Nibbles => 33,
         }
     }
 }
@@ -1456,7 +1456,9 @@ impl<F: Field> RLPItemView<F> {
 
             // Check the tag value
             require!(tag => main_rlp.tag(item_type).expr());
-
+            if item_type != RlpItemType::Node {
+                config.below_limit = LtGadget::construct(&mut cb.base, len.clone(), max_length_inclusive(item_type).expr());
+            }
             match item_type {
                 /// Node (string with len == 0 or 32, OR list with len <= 31)        
                 RlpItemType::Node => {
@@ -1466,20 +1468,18 @@ impl<F: Field> RLPItemView<F> {
                             config.leading_non_zero = LtGadget::construct(&mut cb.base, 0.expr(), first_byte);
                             require!(config.leading_non_zero => true);
                         }}
+                        // config.below_limit = LtGadget::construct(&mut cb.base, len.clone(), max_length_inclusive(item_type).expr());
                     } elsex {
-                        config.below_limit = LtGadget::construct(&mut cb.base, len, 31.expr());
-                        require!(config.below_limit => true);
+                        // config.below_limit = LtGadget::construct(&mut cb.base, len, 32.expr());
                     }}
                 },
                 /// Value (string with len <= 32)
                 RlpItemType::Value => {
                     require!(is_string => true);
-                    config.below_limit = LtGadget::construct(&mut cb.base, len, 33.expr());
-                    require!(config.below_limit => true);
                     ifx!{is_long => {
                         config.leading_non_zero = LtGadget::construct(&mut cb.base, 0.expr(), first_byte);
                         require!(config.leading_non_zero => true);
-                    }}                
+                    }}    
                 },
                 /// Hash (string with len == 32), can be empty
                 RlpItemType::Hash => {
@@ -1493,12 +1493,11 @@ impl<F: Field> RLPItemView<F> {
                         config.leading_non_zero = LtGadget::construct(&mut cb.base, 0.expr(), first_byte);
                         require!(config.leading_non_zero => true);
                     }}
-                    config.below_limit = LtGadget::construct(&mut cb.base, len, 34.expr());
-                    require!(config.below_limit => true);
                 },
                 /// Nibbles has no limitation
                 RlpItemType::Nibbles => {},
             }
+            //  require!(config.below_limit => true);
 
             config.num_bytes = Some(main_rlp.num_bytes.rot(meta, rot));
             config.len = Some(main_rlp.len.rot(meta, rot));
@@ -1520,22 +1519,27 @@ impl<F: Field> RLPItemView<F> {
         item: &RLPItemWitness,
         item_type: RlpItemType,
     ) -> Result<(), Error> {
+        if item_type != RlpItemType::Node {
+            self.below_limit.assign(region, offset, item.len().scalar(), max_length_inclusive(item_type).scalar())?;
+        }
         match item_type {
             RlpItemType::Node => {
-                self.below_limit.assign(region, offset, item.len().scalar(), 31.scalar())?;
-                if item.is_string() && item.is_long() {
-                    self.leading_non_zero.assign(region, offset, 0.scalar(), item.bytes[1].scalar())?;
+                if item.is_string() {
+                    if item.is_long() {
+                        self.leading_non_zero.assign(region, offset, 0.scalar(), item.bytes[1].scalar())?;
+                    }
+                    // self.below_limit.assign(region, offset, item.len().scalar(), max_length_inclusive(item_type).scalar())?;
+                } else {
+                    // self.below_limit.assign(region, offset, item.len().scalar(), 32.scalar())?;
                 }
             },
             RlpItemType::Value => {
-                self.below_limit.assign(region, offset, item.len().scalar(), 33.scalar())?;
                 if item.is_long() {
                     self.leading_non_zero.assign(region, offset, 0.scalar(), item.bytes[1].scalar())?;
                 }
             },
             RlpItemType::Hash => (),
             RlpItemType::Key => {
-                self.below_limit.assign(region, offset, item.len().scalar(), 34.scalar())?;
                 if item.is_long() {
                     self.leading_non_zero.assign(region, offset, 0.scalar(), item.bytes[1].scalar())?;
                 }
@@ -1583,5 +1587,15 @@ impl<F: Field> RLPItemView<F> {
 
     pub(crate) fn is_very_long(&self) -> Expression<F> {
         not::expr(self.is_short() + self.is_long())
+    }
+}
+
+fn max_length_inclusive(item_type: RlpItemType) -> usize {
+    match item_type {
+        RlpItemType::Node => 33,
+        RlpItemType::Value => 33,
+        RlpItemType::Hash => 33,
+        RlpItemType::Key => 34,
+        RlpItemType::Nibbles => 33,
     }
 }

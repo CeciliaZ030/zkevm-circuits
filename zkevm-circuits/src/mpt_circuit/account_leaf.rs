@@ -133,7 +133,7 @@ impl<F: Field> AccountLeafConfig<F> {
                     RlpItemType::Hash,
                 ),
             ];
-            config.views.append(&mut nonce_items.to_vec());
+            config.views.append(&mut codehash_items.to_vec());
 
             let drifted_bytes =
                 ctx.rlp_item(meta, cb, AccountRowType::Drifted as usize, RlpItemType::Key);
