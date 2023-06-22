@@ -1263,6 +1263,8 @@ pub struct MainRLPGadget<F> {
     rlc_content: Cell<F>,
     rlc_rlp: Cell<F>,
     tag: Cell<F>,
+    max_len: Cell<F>,
+
 }
 
 impl<F: Field> MainRLPGadget<F> {
@@ -1281,6 +1283,7 @@ impl<F: Field> MainRLPGadget<F> {
                 rlc_content: cb.query_cell(),
                 rlc_rlp: cb.query_cell(),
                 tag: cb.query_cell(),
+                max_len: cb.query_cell(),
             };
 
             // Decode the RLP item
@@ -1345,7 +1348,18 @@ impl<F: Field> MainRLPGadget<F> {
 
         // Decode the RLP item
         let rlp_witness = self.rlp.assign(region, offset, bytes)?;
-
+        // Make sure the RLP item is within a valid range
+        let max_len = if item_type == RlpItemType::Node {
+            if rlp_witness.is_string() {
+                self.max_length(item_type)
+            } else {
+                HASH_WIDTH - 1
+            }
+        } else {
+            self.max_length(item_type)
+        };
+        self.max_len.assign(region, offset, max_len.scalar())?;
+        
         // Store RLP properties for easy access
         self.num_bytes
             .assign(region, offset, rlp_witness.num_bytes().scalar())?;
@@ -1420,6 +1434,54 @@ pub struct RLPItemView<F> {
 }
 
 impl<F: Field> RLPItemView<F> {
+
+    pub(crate) fn construct(
+        main_rlp: MainRLPGadget<F>,
+        meta: &mut VirtualCells<F>,
+        cb: &mut MPTConstraintBuilder<F>,
+        rot: usize,
+        item_type: RlpItemType,
+    ) -> RLPItemView<F> {
+        circuit!([meta, cb.base], {
+            let is_string = main_rlp.rlp.is_string_at(meta, rot);
+            let tag = main_rlp.tag.rot(meta, rot);
+            let max_len = main_rlp.max_len.rot(meta, rot);
+            let len = main_rlp.len.rot(meta, rot);
+
+            // Check the tag value
+            require!(tag => main_rlp.tag(item_type).expr());
+            // Check the is_string value
+            if item_type == RlpItemType::Value || item_type == RlpItemType::Key {
+                require!(is_string => true);
+            }
+            // Hashes always have length 32
+            if item_type == RlpItemType::Hash {
+                require!(len => HASH_WIDTH);
+            }
+            if item_type == RlpItemType::Node {
+                // Nodes always have length 0 or 32 when a string, or are < 32 when a list
+                ifx! {is_string => {
+                    require!(max_len => main_rlp.max_length(item_type).expr());
+                    require!(len => [0, HASH_WIDTH]);
+                } elsex {
+                    require!(max_len => HASH_WIDTH - 1);
+                }}
+            } else {
+                require!(max_len => main_rlp.max_length(item_type).expr());
+            }
+        });
+        RLPItemView {
+            num_bytes: Some(main_rlp.num_bytes.rot(meta, rot)),
+            len: Some(main_rlp.len.rot(meta, rot)),
+            mult_diff: Some(main_rlp.mult_diff.rot(meta, rot)),
+            rlc_content: Some(main_rlp.rlc_content.rot(meta, rot)),
+            rlc_rlp: Some(main_rlp.rlc_rlp.rot(meta, rot)),
+            bytes: main_rlp.bytes.iter().map(|byte| byte.rot(meta, rot)).collect(),
+            is_short: Some(main_rlp.rlp.value.is_short.rot(meta, rot)),
+            is_long: Some(main_rlp.rlp.value.is_long.rot(meta, rot)),
+        }
+    }
+
     pub(crate) fn num_bytes(&self) -> Expression<F> {
         self.num_bytes.clone().unwrap()
     }

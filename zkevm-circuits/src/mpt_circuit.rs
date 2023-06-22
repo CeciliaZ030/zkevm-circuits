@@ -154,7 +154,8 @@ impl<F: Field> MPTContext<F> {
         idx: usize,
         item_type: RlpItemType,
     ) -> RLPItemView<F> {
-        self.rlp_item.create_view(meta, cb, idx, item_type)
+        RLPItemView::construct(self.rlp_item.clone(), meta, cb, idx, item_type)
+        // self.rlp_item.create_view(meta, cb, idx, item_type)
     }
 }
 
