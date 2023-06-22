@@ -309,7 +309,7 @@ impl<F: Field> BranchGadget<F> {
 
         self.views[0].assign(region, offset, &rlp_values[0], RlpItemType::Node)?;
         for node_index in 0..ARITY {
-            self.views[node_index].assign(
+            self.views[1 + node_index].assign(
                 region, 
                 offset, 
                 &rlp_values[1 + node_index],

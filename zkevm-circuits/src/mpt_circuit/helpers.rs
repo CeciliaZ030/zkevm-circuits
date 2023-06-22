@@ -1449,8 +1449,9 @@ impl<F: Field> RLPItemView<F> {
             let mut config = RLPItemView::default();
             
             let is_string = main_rlp.rlp.is_string_at(meta, rot);
+            let is_long = main_rlp.rlp.is_list_at(meta, rot);
             let tag = main_rlp.tag.rot(meta, rot);
-            let max_len = main_rlp.max_len.rot(meta, rot);
+            let first_byte = main_rlp.bytes[1].rot(meta, rot);
             let len = main_rlp.len.rot(meta, rot);
 
             // Check the tag value
@@ -1461,18 +1462,26 @@ impl<F: Field> RLPItemView<F> {
                 RlpItemType::Node => {
                     ifx! {is_string => {
                         require!(len => [0, HASH_WIDTH]);
+                        ifx!{is_long => {
+                            config.leading_non_zero = LtGadget::construct(&mut cb.base, 0.expr(), first_byte);
+                            require!(config.leading_non_zero => true);
+                        }}
                     } elsex {
                         config.below_limit = LtGadget::construct(&mut cb.base, len, 31.expr());
-                        require!(max_len => HASH_WIDTH - 1);
+                        require!(config.below_limit => true);
                     }}
                 },
                 /// Value (string with len <= 32)
                 RlpItemType::Value => {
                     require!(is_string => true);
-                    config.below_limit = LtGadget::construct(&mut cb.base, len, 32.expr());
-                    require!(max_len => 32.expr());
+                    config.below_limit = LtGadget::construct(&mut cb.base, len, 33.expr());
+                    require!(config.below_limit => true);
+                    ifx!{is_long => {
+                        config.leading_non_zero = LtGadget::construct(&mut cb.base, 0.expr(), first_byte);
+                        require!(config.leading_non_zero => true);
+                    }}                
                 },
-                /// Hash (string with len == 32)
+                /// Hash (string with len == 32), can be empty
                 RlpItemType::Hash => {
                     require!(is_string => true);
                     require!(len => HASH_WIDTH);
@@ -1480,8 +1489,12 @@ impl<F: Field> RLPItemView<F> {
                 /// Key (string with len <= 33)
                 RlpItemType::Key => {
                     require!(is_string => true);
-                    config.below_limit = LtGadget::construct(&mut cb.base, len, 32.expr());
-                    require!(max_len => 33.expr());
+                    ifx!{is_long => {
+                        config.leading_non_zero = LtGadget::construct(&mut cb.base, 0.expr(), first_byte);
+                        require!(config.leading_non_zero => true);
+                    }}
+                    config.below_limit = LtGadget::construct(&mut cb.base, len, 34.expr());
+                    require!(config.below_limit => true);
                 },
                 /// Nibbles has no limitation
                 RlpItemType::Nibbles => {},
@@ -1510,13 +1523,22 @@ impl<F: Field> RLPItemView<F> {
         match item_type {
             RlpItemType::Node => {
                 self.below_limit.assign(region, offset, item.len().scalar(), 31.scalar())?;
+                if item.is_string() && item.is_long() {
+                    self.leading_non_zero.assign(region, offset, 0.scalar(), item.bytes[1].scalar())?;
+                }
             },
             RlpItemType::Value => {
-                self.below_limit.assign(region, offset, item.len().scalar(), 32.scalar())?;
+                self.below_limit.assign(region, offset, item.len().scalar(), 33.scalar())?;
+                if item.is_long() {
+                    self.leading_non_zero.assign(region, offset, 0.scalar(), item.bytes[1].scalar())?;
+                }
             },
             RlpItemType::Hash => (),
             RlpItemType::Key => {
-                self.below_limit.assign(region, offset, item.len().scalar(), 32.scalar())?;
+                self.below_limit.assign(region, offset, item.len().scalar(), 34.scalar())?;
+                if item.is_long() {
+                    self.leading_non_zero.assign(region, offset, 0.scalar(), item.bytes[1].scalar())?;
+                }
             },
             RlpItemType::Nibbles => (),
         };
