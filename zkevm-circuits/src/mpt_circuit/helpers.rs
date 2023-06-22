@@ -1359,7 +1359,7 @@ impl<F: Field> MainRLPGadget<F> {
             self.max_length(item_type)
         };
         self.max_len.assign(region, offset, max_len.scalar())?;
-        
+
         // Store RLP properties for easy access
         self.num_bytes
             .assign(region, offset, rlp_witness.num_bytes().scalar())?;
@@ -1378,28 +1378,28 @@ impl<F: Field> MainRLPGadget<F> {
         Ok(rlp_witness)
     }
 
-    pub(crate) fn create_view(
-        &self,
-        meta: &mut VirtualCells<F>,
-        cb: &mut MPTConstraintBuilder<F>,
-        rot: usize,
-        item_type: RlpItemType,
-    ) -> RLPItemView<F> {
-        circuit!([meta, cb.base], {
-            // Check the tag value
-            require!(self.tag.rot(meta, rot) => self.tag(item_type).expr());
-        });
-        RLPItemView {
-            num_bytes: Some(self.num_bytes.rot(meta, rot)),
-            len: Some(self.len.rot(meta, rot)),
-            mult_diff: Some(self.mult_diff.rot(meta, rot)),
-            rlc_content: Some(self.rlc_content.rot(meta, rot)),
-            rlc_rlp: Some(self.rlc_rlp.rot(meta, rot)),
-            bytes: self.bytes.iter().map(|byte| byte.rot(meta, rot)).collect(),
-            is_short: Some(self.rlp.value.is_short.rot(meta, rot)),
-            is_long: Some(self.rlp.value.is_long.rot(meta, rot)),
-        }
-    }
+    // pub(crate) fn create_view(
+    //     &self,
+    //     meta: &mut VirtualCells<F>,
+    //     cb: &mut MPTConstraintBuilder<F>,
+    //     rot: usize,
+    //     item_type: RlpItemType,
+    // ) -> RLPItemView<F> {
+    //     circuit!([meta, cb.base], {
+    //         // Check the tag value
+    //         require!(self.tag.rot(meta, rot) => self.tag(item_type).expr());
+    //     });
+    //     RLPItemView {
+    //         num_bytes: Some(self.num_bytes.rot(meta, rot)),
+    //         len: Some(self.len.rot(meta, rot)),
+    //         mult_diff: Some(self.mult_diff.rot(meta, rot)),
+    //         rlc_content: Some(self.rlc_content.rot(meta, rot)),
+    //         rlc_rlp: Some(self.rlc_rlp.rot(meta, rot)),
+    //         bytes: self.bytes.iter().map(|byte| byte.rot(meta, rot)).collect(),
+    //         is_short: Some(self.rlp.value.is_short.rot(meta, rot)),
+    //         is_long: Some(self.rlp.value.is_long.rot(meta, rot)),
+    //     }
+    // }
 
     fn tag(&self, item_type: RlpItemType) -> FixedTableTag {
         if item_type == RlpItemType::Nibbles {
@@ -1423,6 +1423,9 @@ impl<F: Field> MainRLPGadget<F> {
 /// Main RLP item
 #[derive(Clone, Debug, Default)]
 pub struct RLPItemView<F> {
+    below_limit: LtGadget<F, 1>,
+    leading_non_zero: LtGadget<F, 1>,
+
     pub(crate) bytes: Vec<Expression<F>>,
     pub(crate) num_bytes: Option<Expression<F>>,
     pub(crate) len: Option<Expression<F>>,
@@ -1443,6 +1446,8 @@ impl<F: Field> RLPItemView<F> {
         item_type: RlpItemType,
     ) -> RLPItemView<F> {
         circuit!([meta, cb.base], {
+            let mut config = RLPItemView::default();
+            
             let is_string = main_rlp.rlp.is_string_at(meta, rot);
             let tag = main_rlp.tag.rot(meta, rot);
             let max_len = main_rlp.max_len.rot(meta, rot);
@@ -1450,36 +1455,72 @@ impl<F: Field> RLPItemView<F> {
 
             // Check the tag value
             require!(tag => main_rlp.tag(item_type).expr());
-            // Check the is_string value
-            if item_type == RlpItemType::Value || item_type == RlpItemType::Key {
-                require!(is_string => true);
+
+            match item_type {
+                /// Node (string with len == 0 or 32, OR list with len <= 31)        
+                RlpItemType::Node => {
+                    ifx! {is_string => {
+                        require!(len => [0, HASH_WIDTH]);
+                    } elsex {
+                        config.below_limit = LtGadget::construct(&mut cb.base, len, 31.expr());
+                        require!(max_len => HASH_WIDTH - 1);
+                    }}
+                },
+                /// Value (string with len <= 32)
+                RlpItemType::Value => {
+                    require!(is_string => true);
+                    config.below_limit = LtGadget::construct(&mut cb.base, len, 32.expr());
+                    require!(max_len => 32.expr());
+                },
+                /// Hash (string with len == 32)
+                RlpItemType::Hash => {
+                    require!(is_string => true);
+                    require!(len => HASH_WIDTH);
+                },
+                /// Key (string with len <= 33)
+                RlpItemType::Key => {
+                    require!(is_string => true);
+                    config.below_limit = LtGadget::construct(&mut cb.base, len, 32.expr());
+                    require!(max_len => 33.expr());
+                },
+                /// Nibbles has no limitation
+                RlpItemType::Nibbles => {},
             }
-            // Hashes always have length 32
-            if item_type == RlpItemType::Hash {
-                require!(len => HASH_WIDTH);
-            }
-            if item_type == RlpItemType::Node {
-                // Nodes always have length 0 or 32 when a string, or are < 32 when a list
-                ifx! {is_string => {
-                    require!(max_len => main_rlp.max_length(item_type).expr());
-                    require!(len => [0, HASH_WIDTH]);
-                } elsex {
-                    require!(max_len => HASH_WIDTH - 1);
-                }}
-            } else {
-                require!(max_len => main_rlp.max_length(item_type).expr());
-            }
-        });
-        RLPItemView {
-            num_bytes: Some(main_rlp.num_bytes.rot(meta, rot)),
-            len: Some(main_rlp.len.rot(meta, rot)),
-            mult_diff: Some(main_rlp.mult_diff.rot(meta, rot)),
-            rlc_content: Some(main_rlp.rlc_content.rot(meta, rot)),
-            rlc_rlp: Some(main_rlp.rlc_rlp.rot(meta, rot)),
-            bytes: main_rlp.bytes.iter().map(|byte| byte.rot(meta, rot)).collect(),
-            is_short: Some(main_rlp.rlp.value.is_short.rot(meta, rot)),
-            is_long: Some(main_rlp.rlp.value.is_long.rot(meta, rot)),
-        }
+
+            config.num_bytes = Some(main_rlp.num_bytes.rot(meta, rot));
+            config.len = Some(main_rlp.len.rot(meta, rot));
+            config.mult_diff = Some(main_rlp.mult_diff.rot(meta, rot));
+            config.rlc_content = Some(main_rlp.rlc_content.rot(meta, rot));
+            config.rlc_rlp = Some(main_rlp.rlc_rlp.rot(meta, rot));
+            config.bytes = main_rlp.bytes.iter().map(|byte| byte.rot(meta, rot)).collect();
+            config.is_short = Some(main_rlp.rlp.value.is_short.rot(meta, rot));
+            config.is_long = Some(main_rlp.rlp.value.is_long.rot(meta, rot));
+
+            config
+        })
+    }
+
+    pub(crate) fn assign<S: ChallengeSet<F>>(
+        &self,
+        region: &mut CachedRegion<'_, '_, F, S>,
+        offset: usize,
+        item: &RLPItemWitness,
+        item_type: RlpItemType,
+    ) -> Result<(), Error> {
+        match item_type {
+            RlpItemType::Node => {
+                self.below_limit.assign(region, offset, item.len().scalar(), 31.scalar())?;
+            },
+            RlpItemType::Value => {
+                self.below_limit.assign(region, offset, item.len().scalar(), 32.scalar())?;
+            },
+            RlpItemType::Hash => (),
+            RlpItemType::Key => {
+                self.below_limit.assign(region, offset, item.len().scalar(), 32.scalar())?;
+            },
+            RlpItemType::Nibbles => (),
+        };
+        Ok(())
     }
 
     pub(crate) fn num_bytes(&self) -> Expression<F> {

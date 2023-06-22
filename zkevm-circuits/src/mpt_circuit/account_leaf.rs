@@ -7,7 +7,7 @@ use halo2_proofs::{
 };
 
 use super::{
-    helpers::{KeyDataWitness, ListKeyGadget, MainData, ParentDataWitness},
+    helpers::{KeyDataWitness, ListKeyGadget, MainData, ParentDataWitness, RLPItemView},
     rlp_gadgets::RLPItemWitness,
     witness_row::{AccountRowType, Node},
 };
@@ -48,6 +48,7 @@ pub(crate) struct AccountLeafConfig<F> {
     is_balance_mod: IsEqualGadget<F>,
     is_storage_mod: IsEqualGadget<F>,
     is_codehash_mod: IsEqualGadget<F>,
+    views: Vec<RLPItemView<F>>,
 }
 
 impl<F: Field> AccountLeafConfig<F> {
@@ -70,6 +71,7 @@ impl<F: Field> AccountLeafConfig<F> {
                 ctx.rlp_item(meta, cb, AccountRowType::KeyS as usize, RlpItemType::Key),
                 ctx.rlp_item(meta, cb, AccountRowType::KeyC as usize, RlpItemType::Key),
             ];
+            config.views.append(&mut key_items.to_vec());
             config.value_rlp_bytes = [cb.query_bytes(), cb.query_bytes()];
             config.value_list_rlp_bytes = [cb.query_bytes(), cb.query_bytes()];
             let nonce_items = [
@@ -86,6 +88,7 @@ impl<F: Field> AccountLeafConfig<F> {
                     RlpItemType::Value,
                 ),
             ];
+            config.views.append(&mut nonce_items.to_vec());
             let balance_items = [
                 ctx.rlp_item(
                     meta,
@@ -100,6 +103,7 @@ impl<F: Field> AccountLeafConfig<F> {
                     RlpItemType::Value,
                 ),
             ];
+            config.views.append(&mut balance_items.to_vec());
             let storage_items = [
                 ctx.rlp_item(
                     meta,
@@ -114,6 +118,7 @@ impl<F: Field> AccountLeafConfig<F> {
                     RlpItemType::Hash,
                 ),
             ];
+            config.views.append(&mut storage_items.to_vec());
             let codehash_items = [
                 ctx.rlp_item(
                     meta,
@@ -128,10 +133,14 @@ impl<F: Field> AccountLeafConfig<F> {
                     RlpItemType::Hash,
                 ),
             ];
+            config.views.append(&mut nonce_items.to_vec());
+
             let drifted_bytes =
                 ctx.rlp_item(meta, cb, AccountRowType::Drifted as usize, RlpItemType::Key);
             let wrong_bytes =
                 ctx.rlp_item(meta, cb, AccountRowType::Wrong as usize, RlpItemType::Key);
+            config.views.push(drifted_bytes.clone());
+            config.views.push(wrong_bytes.clone());
 
             config.main_data =
                 MainData::load("main storage", cb, &ctx.memory[main_memory()], 0.expr());
@@ -412,24 +421,37 @@ impl<F: Field> AccountLeafConfig<F> {
             rlp_values[AccountRowType::KeyS as usize].clone(),
             rlp_values[AccountRowType::KeyC as usize].clone(),
         ];
+        self.views[0].assign(region, offset, &key_items[0], RlpItemType::Key)?;
+        self.views[1].assign(region, offset, &key_items[1], RlpItemType::Key)?;
         let nonce_items = [
             rlp_values[AccountRowType::NonceS as usize].clone(),
             rlp_values[AccountRowType::NonceC as usize].clone(),
         ];
+        self.views[2].assign(region, offset, &nonce_items[0], RlpItemType::Value)?;
+        self.views[3].assign(region, offset, &nonce_items[1], RlpItemType::Value)?;
         let balance_items = [
             rlp_values[AccountRowType::BalanceS as usize].clone(),
             rlp_values[AccountRowType::BalanceC as usize].clone(),
         ];
+        self.views[4].assign(region, offset, &balance_items[0], RlpItemType::Value)?;
+        self.views[5].assign(region, offset, &balance_items[1], RlpItemType::Value)?;
         let storage_items = [
             rlp_values[AccountRowType::StorageS as usize].clone(),
             rlp_values[AccountRowType::StorageC as usize].clone(),
         ];
+        self.views[6].assign(region, offset, &storage_items[0], RlpItemType::Hash)?;
+        self.views[7].assign(region, offset, &storage_items[1], RlpItemType::Hash)?;
         let codehash_items = [
             rlp_values[AccountRowType::CodehashS as usize].clone(),
             rlp_values[AccountRowType::CodehashC as usize].clone(),
         ];
+        self.views[8].assign(region, offset, &codehash_items[0], RlpItemType::Hash)?;
+        self.views[9].assign(region, offset, &codehash_items[1], RlpItemType::Hash)?;
+        
         let drifted_item = rlp_values[AccountRowType::Drifted as usize].clone();
         let wrong_item = rlp_values[AccountRowType::Wrong as usize].clone();
+        self.views[10].assign(region, offset, &drifted_item, RlpItemType::Key)?;
+        self.views[11].assign(region, offset, &wrong_item, RlpItemType::Key)?;
 
         let main_data =
             self.main_data

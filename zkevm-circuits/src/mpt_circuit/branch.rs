@@ -42,6 +42,7 @@ pub(crate) struct BranchGadget<F> {
     is_drifted: [Cell<F>; ARITY],
     mod_rlc: [Cell<F>; 2],
     is_not_hashed: [LtGadget<F, 2>; 2],
+    views: Vec<RLPItemView<F>>,
 
     // Post branch state
     post_state: Option<BranchState<F>>,
@@ -69,6 +70,7 @@ impl<F: Field> BranchGadget<F> {
             // Data
             let children: [RLPItemView<F>; ARITY + 1] =
                 array_init::array_init(|i| ctx.rlp_item(meta, cb, i, RlpItemType::Node));
+            config.views.append(&mut children[1..].to_vec());
 
             let mut num_bytes_left = vec![0.expr(); 2];
             let mut node_rlc = vec![0.expr(); 2];
@@ -306,6 +308,12 @@ impl<F: Field> BranchGadget<F> {
         }
 
         for node_index in 0..ARITY {
+            self.views[node_index].assign(
+                region, 
+                offset, 
+                &rlp_values[1 + node_index],
+                RlpItemType::Node
+            )?;
             self.is_modified[node_index].assign(
                 region,
                 offset,
