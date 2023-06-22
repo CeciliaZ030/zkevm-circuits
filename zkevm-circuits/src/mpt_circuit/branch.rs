@@ -70,7 +70,7 @@ impl<F: Field> BranchGadget<F> {
             // Data
             let children: [RLPItemView<F>; ARITY + 1] =
                 array_init::array_init(|i| ctx.rlp_item(meta, cb, i, RlpItemType::Node));
-            config.views.append(&mut children[1..].to_vec());
+            config.views.append(&mut children.to_vec());
 
             let mut num_bytes_left = vec![0.expr(); 2];
             let mut node_rlc = vec![0.expr(); 2];
@@ -307,6 +307,7 @@ impl<F: Field> BranchGadget<F> {
             )?;
         }
 
+        self.views[0].assign(region, offset, &rlp_values[0], RlpItemType::Node)?;
         for node_index in 0..ARITY {
             self.views[node_index].assign(
                 region, 
