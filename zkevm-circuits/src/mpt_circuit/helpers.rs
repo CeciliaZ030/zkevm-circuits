@@ -1263,8 +1263,6 @@ pub struct MainRLPGadget<F> {
     rlc_content: Cell<F>,
     rlc_rlp: Cell<F>,
     tag: Cell<F>,
-    max_len: Cell<F>,
-
 }
 
 impl<F: Field> MainRLPGadget<F> {
@@ -1283,7 +1281,6 @@ impl<F: Field> MainRLPGadget<F> {
                 rlc_content: cb.query_cell(),
                 rlc_rlp: cb.query_cell(),
                 tag: cb.query_cell(),
-                max_len: cb.query_cell(),
             };
 
             // Decode the RLP item
@@ -1295,7 +1292,7 @@ impl<F: Field> MainRLPGadget<F> {
                     .map(|byte| byte.expr())
                     .collect::<Vec<_>>(),
             );
-
+            
             // Store RLP properties for easy access
             require!(config.num_bytes => config.rlp.num_bytes());
             require!(config.len => config.rlp.len());
@@ -1303,7 +1300,9 @@ impl<F: Field> MainRLPGadget<F> {
             require!(config.rlc_rlp => config.rlp.rlc_rlp(cb, r));
             let mult_diff = config.mult_diff.expr();
             require!((FixedTableTag::RMult, config.rlp.num_bytes(), mult_diff) => @FIXED);
-            // `tag` and `max_len` are "free" input that needs to be constrained externally!
+
+            // TODO:(Cecilia) do bytes check later at State Machine constrain time
+            //      no neeed of tag cell, just check the rows needed for item_view
 
             // Range/zero checksz
             // These range checks ensure that the value in the RLP columns are all byte
@@ -1348,17 +1347,6 @@ impl<F: Field> MainRLPGadget<F> {
 
         // Decode the RLP item
         let rlp_witness = self.rlp.assign(region, offset, bytes)?;
-        // Make sure the RLP item is within a valid range
-        let max_len = if item_type == RlpItemType::Node {
-            if rlp_witness.is_string() {
-                Self::max_length(item_type)
-            } else {
-                HASH_WIDTH - 1
-            }
-        } else {
-            Self::max_length(item_type)
-        };
-        self.max_len.assign(region, offset, max_len.scalar())?;
 
         // Store RLP properties for easy access
         self.num_bytes
@@ -1378,28 +1366,6 @@ impl<F: Field> MainRLPGadget<F> {
         Ok(rlp_witness)
     }
 
-    // pub(crate) fn create_view(
-    //     &self,
-    //     meta: &mut VirtualCells<F>,
-    //     cb: &mut MPTConstraintBuilder<F>,
-    //     rot: usize,
-    //     item_type: RlpItemType,
-    // ) -> RLPItemView<F> {
-    //     circuit!([meta, cb.base], {
-    //         // Check the tag value
-    //         require!(self.tag.rot(meta, rot) => self.tag(item_type).expr());
-    //     });
-    //     RLPItemView {
-    //         num_bytes: Some(self.num_bytes.rot(meta, rot)),
-    //         len: Some(self.len.rot(meta, rot)),
-    //         mult_diff: Some(self.mult_diff.rot(meta, rot)),
-    //         rlc_content: Some(self.rlc_content.rot(meta, rot)),
-    //         rlc_rlp: Some(self.rlc_rlp.rot(meta, rot)),
-    //         bytes: self.bytes.iter().map(|byte| byte.rot(meta, rot)).collect(),
-    //         is_short: Some(self.rlp.value.is_short.rot(meta, rot)),
-    //         is_long: Some(self.rlp.value.is_long.rot(meta, rot)),
-    //     }
-    // }
 
     fn tag(&self, item_type: RlpItemType) -> FixedTableTag {
         if item_type == RlpItemType::Nibbles {
@@ -1449,6 +1415,7 @@ impl<F: Field> RLPItemView<F> {
             let mut config = RLPItemView::default();
             
             let is_string = main_rlp.rlp.is_string_at(meta, rot);
+            let is_list = main_rlp.rlp.is_list_at(meta, rot);
             let is_long = main_rlp.rlp.is_list_at(meta, rot);
             let tag = main_rlp.tag.rot(meta, rot);
             let first_byte = main_rlp.bytes[1].rot(meta, rot);
@@ -1468,10 +1435,12 @@ impl<F: Field> RLPItemView<F> {
                             config.leading_non_zero = LtGadget::construct(&mut cb.base, 0.expr(), first_byte);
                             require!(config.leading_non_zero => true);
                         }}
-                        // config.below_limit = LtGadget::construct(&mut cb.base, len.clone(), max_length_inclusive(item_type).expr());
-                    } elsex {
-                        // config.below_limit = LtGadget::construct(&mut cb.base, len, 32.expr());
                     }}
+                    config.below_limit = LtGadget::construct(
+                        &mut cb.base, 
+                        len.clone(), 
+                        is_string * max_length_inclusive(item_type).expr() + is_list * 32.expr()
+                    );
                 },
                 /// Value (string with len <= 32)
                 RlpItemType::Value => {
@@ -1497,7 +1466,7 @@ impl<F: Field> RLPItemView<F> {
                 /// Nibbles has no limitation
                 RlpItemType::Nibbles => {},
             }
-            //  require!(config.below_limit => true);
+             require!(config.below_limit => true);
 
             config.num_bytes = Some(main_rlp.num_bytes.rot(meta, rot));
             config.len = Some(main_rlp.len.rot(meta, rot));
@@ -1528,10 +1497,13 @@ impl<F: Field> RLPItemView<F> {
                     if item.is_long() {
                         self.leading_non_zero.assign(region, offset, 0.scalar(), item.bytes[1].scalar())?;
                     }
-                    // self.below_limit.assign(region, offset, item.len().scalar(), max_length_inclusive(item_type).scalar())?;
-                } else {
-                    // self.below_limit.assign(region, offset, item.len().scalar(), 32.scalar())?;
                 }
+                self.below_limit.assign(
+                    region, 
+                    offset, 
+                    item.len().scalar(), 
+                    (item.is_string() as usize * max_length_inclusive(item_type) + item.is_list() as usize * 32).scalar()
+                )?;
             },
             RlpItemType::Value => {
                 if item.is_long() {
