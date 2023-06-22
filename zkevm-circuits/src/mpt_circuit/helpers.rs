@@ -1212,10 +1212,6 @@ impl<F: Field> WrongGadget<F> {
 
 #[derive(Clone, Debug, Default)]
 pub struct MinEncodeGadget<F> {
-    is_node: IsEqualGadget<F>,
-    is_value: IsEqualGadget<F>,
-    is_hash: IsEqualGadget<F>,
-    is_key: IsEqualGadget<F>,
     max_len: Cell<F>,
     max_len_cap: LtGadget<F, 1>,
     leading_non_zero: LtGadget<F, 1>,
@@ -1230,58 +1226,6 @@ impl<F: Field> MinEncodeGadget<F> {
         circuit!([meta, cb], {
             let mut config = MinEncodeGadget::default();
             
-            // TODO:(Cecilia) just use is_node = item_type - RlpItemType::Node to save cells?
-            config.is_node = IsEqualGadget::construct(&mut cb.base, item_type.expr(), (RlpItemType::Node as usize).expr());
-            config.is_value =  IsEqualGadget::construct(&mut cb.base, item_type.expr(), (RlpItemType::Value as usize).expr());
-            config.is_hash = IsEqualGadget::construct(&mut cb.base, item_type.expr(), (RlpItemType::Hash as usize).expr());
-            config.is_key = IsEqualGadget::construct(&mut cb.base, item_type.expr(), (RlpItemType::Key as usize).expr());
-
-            config.max_len = cb.query_cell();            
-            config.max_len_cap = LtGadget::construct(&mut cb.base, item.len(), config.max_len.expr());
-            let mut need_min_encode: Expression<F> = 0.expr();
-
-            // Node (string with len == 0 or 32, OR list with len <= 31)
-            ifx!{config.is_node.expr() => {
-                ifx!{item.is_string() => {
-                    require!(item.len() => [0, HASH_WIDTH]);
-                    // need_min_encode = or::expr([need_min_encode, config.is_node.expr() * item.is_long()]);
-                    ifx!(item.is_long() => {
-                        config.leading_non_zero = LtGadget::construct(&mut cb.base, 0.expr(), item.value.bytes[1].expr());
-                        // require!(config.leading_non_zero.expr() => true);
-                    });
-                } elsex {
-                    require!(config.max_len.expr() => HASH_WIDTH - 1);
-                }}
-            }};
-            // Value (string with len <= 32), minimum rlp encoded without leading zeros
-            ifx!{config.is_value.expr() => {
-                require!(item.is_string() => true);
-                ifx!(item.is_long() => {
-                    config.leading_non_zero = LtGadget::construct(&mut cb.base, 0.expr(), item.value.bytes[1].expr());
-                    // require!(config.leading_non_zero.expr() => true);
-                });
-                // need_min_encode = or::expr([need_min_encode, config.is_value.expr() * item.is_long()]);
-            }};
-            // Hash (string with len == 32)
-            ifx! {config.is_hash.expr() => {
-                require!(item.is_string() => true);
-                require!(item.len() => HASH_WIDTH);
-            }};
-            // Key (string with len <= 33)
-            ifx! {config.is_key.expr() => {
-                require!(item.is_string() => true);
-                ifx!(item.is_long() => {
-                    config.leading_non_zero = LtGadget::construct(&mut cb.base, 0.expr(), item.value.bytes[1].expr());
-                    // require!(config.leading_non_zero.expr() => true);
-                });
-                // need_min_encode = or::expr([need_min_encode, config.is_key.expr() * item.is_long()]);
-            }};
-
-            // ifx!(need_min_encode => {
-            //     config.leading_non_zero = LtGadget::construct(&mut cb.base, 0.expr(), item.value.bytes[1].expr());
-            //     require!(config.leading_non_zero.expr() => true);
-            // });
-                
             config
         })
     }
@@ -1293,35 +1237,6 @@ impl<F: Field> MinEncodeGadget<F> {
         item_type: RlpItemType,
         item: RLPItemWitness,
     ) -> Result<(), Error> {
-        let item_type_scalar = (item_type as usize).scalar();
-        let max_length = if item_type == RlpItemType::Node && item.is_list() {
-            (HASH_WIDTH - 1).scalar()
-        } else {
-            Self::max_length(item_type).scalar()
-        };
-
-        self.is_node.assign(region, offset, item_type_scalar, (RlpItemType::Node as usize).scalar())?;
-        self.is_value.assign(region, offset, item_type_scalar, (RlpItemType::Value as usize).scalar())?;
-        self.is_hash.assign(region, offset, item_type_scalar, (RlpItemType::Hash as usize).scalar())?;
-        self.is_key.assign(region, offset, item_type_scalar, (RlpItemType::Key as usize).scalar())?;
-
-        self.max_len.assign(region, offset, max_length)?;
-        self.max_len_cap.assign(region, offset, item.len().scalar(), max_length)?;
-
-        // only need to check leading non zero for RlpItemType::Value
-        println!("{:?}  item_type {:?}", offset, item_type);
-        if offset == 73 {println!("wrong stuff - {:?} {:?}", item_type, item.value.bytes)};
-        match item_type {
-            RlpItemType::Node | RlpItemType::Value | RlpItemType::Key => {
-                if item.is_string() && item.is_long() {
-                    println!("item.value.bytes = {:?}", item.value.bytes);
-                    self.leading_non_zero.assign(region, offset, 0u8.scalar(), item.value.bytes[1].scalar())?;
-                }
-            },
-            _ =>(),
-        };
-        
-
 
         Ok(())
     }
@@ -1342,18 +1257,12 @@ impl<F: Field> MinEncodeGadget<F> {
 pub struct MainRLPGadget<F> {
     bytes: Vec<Cell<F>>,
     rlp: RLPItemGadget<F>,
-    // below_limit: LtGadget<F, 1>,
-    // minimal_encoded: LtGadget<F, 1>,
     num_bytes: Cell<F>,
     len: Cell<F>,
     mult_diff: Cell<F>,
     rlc_content: Cell<F>,
     rlc_rlp: Cell<F>,
     tag: Cell<F>,
-    // max_len: Cell<F>,
-
-    item_type: Cell<F>,
-    min_encode: MinEncodeGadget<F>
 }
 
 impl<F: Field> MainRLPGadget<F> {
@@ -1372,10 +1281,6 @@ impl<F: Field> MainRLPGadget<F> {
                 rlc_content: cb.query_cell(),
                 rlc_rlp: cb.query_cell(),
                 tag: cb.query_cell(),
-                // max_len: cb.query_cell(),
-
-                item_type: cb.query_cell(),
-                min_encode: MinEncodeGadget::default(),
             };
 
             // Decode the RLP item
@@ -1387,7 +1292,6 @@ impl<F: Field> MainRLPGadget<F> {
                     .map(|byte| byte.expr())
                     .collect::<Vec<_>>(),
             );
-            config.min_encode = MinEncodeGadget::cosntruct(cb, &config.item_type, &config.rlp);
 
             // Store RLP properties for easy access
             require!(config.num_bytes => config.rlp.num_bytes());
@@ -1434,7 +1338,6 @@ impl<F: Field> MainRLPGadget<F> {
         r: F,
         item_type: RlpItemType,
     ) -> Result<RLPItemWitness, Error> {
-        println!("assigning main rlp");
         // Assign the bytes
         for (byte, column) in bytes.iter().zip(self.bytes.iter()) {
             assign!(region, (column.column(), offset) => byte.scalar())?;
@@ -1442,10 +1345,6 @@ impl<F: Field> MainRLPGadget<F> {
 
         // Decode the RLP item
         let rlp_witness = self.rlp.assign(region, offset, bytes)?;
-        self.item_type
-            .assign(region, offset, (item_type as usize).scalar())?;
-        self.min_encode
-            .assign(region, offset, item_type, rlp_witness.clone())?;
 
         // Store RLP properties for easy access
         self.num_bytes
@@ -1475,7 +1374,6 @@ impl<F: Field> MainRLPGadget<F> {
         circuit!([meta, cb.base], {
             // Check the tag value
             require!(self.tag.rot(meta, rot) => self.tag(item_type).expr());
-            require!(self.item_type.rot(meta, rot) => (item_type as usize).expr());
         });
         RLPItemView {
             num_bytes: Some(self.num_bytes.rot(meta, rot)),
