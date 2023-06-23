@@ -28,7 +28,7 @@ use crate::{
 };
 
 use super::{
-    helpers::{Indexable, KeyDataWitness, ListKeyGadget, WrongGadget, RLPItemView},
+    helpers::{Indexable, KeyDataWitness, ListKeyGadget, RLPItemView, WrongGadget},
     rlp_gadgets::{RLPItemWitness, RLPValueGadget},
     witness_row::{Node, StorageRowType},
 };
@@ -305,7 +305,7 @@ impl<F: Field> StorageLeafConfig<F> {
         ];
         self.views[2].assign(region, offset, &value_item[0], RlpItemType::Value)?;
         self.views[3].assign(region, offset, &value_item[1], RlpItemType::Value)?;
-        
+
         let drifted_item = rlp_values[StorageRowType::Drifted as usize].clone();
         let wrong_item = rlp_values[StorageRowType::Wrong as usize].clone();
         self.views[4].assign(region, offset, &drifted_item, RlpItemType::Key)?;

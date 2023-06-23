@@ -242,7 +242,7 @@ impl<F: Field> ExtensionGadget<F> {
         ];
         self.views[2].assign(region, offset, &value_bytes[0], RlpItemType::Node)?;
         self.views[3].assign(region, offset, &value_bytes[1], RlpItemType::Node)?;
-        
+
         let rlp_key = self.rlp_key.assign(
             region,
             offset,

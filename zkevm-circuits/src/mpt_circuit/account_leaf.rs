@@ -447,7 +447,7 @@ impl<F: Field> AccountLeafConfig<F> {
         ];
         self.views[8].assign(region, offset, &codehash_items[0], RlpItemType::Hash)?;
         self.views[9].assign(region, offset, &codehash_items[1], RlpItemType::Hash)?;
-        
+
         let drifted_item = rlp_values[AccountRowType::Drifted as usize].clone();
         let wrong_item = rlp_values[AccountRowType::Wrong as usize].clone();
         self.views[10].assign(region, offset, &drifted_item, RlpItemType::Key)?;

@@ -1219,25 +1219,24 @@ pub struct MinEncodeGadget<F> {
 
 impl<F: Field> MinEncodeGadget<F> {
     pub(crate) fn cosntruct(
-        cb: &mut MPTConstraintBuilder<F>, 
-        item_type: &Cell<F>,
-        item: &RLPItemGadget<F>,
+        _cb: &mut MPTConstraintBuilder<F>,
+        _item_type: &Cell<F>,
+        _item: &RLPItemGadget<F>,
     ) -> Self {
         circuit!([meta, cb], {
-            let mut config = MinEncodeGadget::default();
-            
+            let config = MinEncodeGadget::default();
+
             config
         })
     }
 
     pub(crate) fn assign<S: ChallengeSet<F>>(
         &self,
-        region: &mut CachedRegion<'_, '_, F, S>,
-        offset: usize,
-        item_type: RlpItemType,
-        item: RLPItemWitness,
+        _region: &mut CachedRegion<'_, '_, F, S>,
+        _offset: usize,
+        _item_type: RlpItemType,
+        _item: RLPItemWitness,
     ) -> Result<(), Error> {
-
         Ok(())
     }
 }
@@ -1282,7 +1281,7 @@ impl<F: Field> MainRLPGadget<F> {
                     .map(|byte| byte.expr())
                     .collect::<Vec<_>>(),
             );
-            
+
             // Store RLP properties for easy access
             require!(config.num_bytes => config.rlp.num_bytes());
             require!(config.len => config.rlp.len());
@@ -1356,7 +1355,6 @@ impl<F: Field> MainRLPGadget<F> {
         Ok(rlp_witness)
     }
 
-
     fn tag(&self, item_type: RlpItemType) -> FixedTableTag {
         if item_type == RlpItemType::Nibbles {
             FixedTableTag::RangeKeyLen16
@@ -1383,7 +1381,6 @@ pub struct RLPItemView<F> {
 }
 
 impl<F: Field> RLPItemView<F> {
-
     pub(crate) fn construct(
         main_rlp: MainRLPGadget<F>,
         meta: &mut VirtualCells<F>,
@@ -1393,7 +1390,7 @@ impl<F: Field> RLPItemView<F> {
     ) -> RLPItemView<F> {
         circuit!([meta, cb.base], {
             let mut config = RLPItemView::default();
-            
+
             let is_string = main_rlp.rlp.is_string_at(meta, rot);
             let is_list = main_rlp.rlp.is_list_at(meta, rot);
             let is_long = main_rlp.rlp.is_list_at(meta, rot);
@@ -1404,7 +1401,11 @@ impl<F: Field> RLPItemView<F> {
             // Check the tag value
             require!(tag => main_rlp.tag(item_type).expr());
             if item_type != RlpItemType::Node {
-                config.below_limit = LtGadget::construct(&mut cb.base, len.clone(), max_length_inclusive(item_type).expr());
+                config.below_limit = LtGadget::construct(
+                    &mut cb.base,
+                    len.clone(),
+                    max_length_inclusive(item_type).expr(),
+                );
             }
             match item_type {
                 /// Node (string with len == 0 or 32, OR list with len <= 31)        
@@ -1417,43 +1418,47 @@ impl<F: Field> RLPItemView<F> {
                         }}
                     }}
                     config.below_limit = LtGadget::construct(
-                        &mut cb.base, 
-                        len.clone(), 
-                        is_string * max_length_inclusive(item_type).expr() + is_list * 32.expr()
+                        &mut cb.base,
+                        len.clone(),
+                        is_string * max_length_inclusive(item_type).expr() + is_list * 32.expr(),
                     );
-                },
+                }
                 /// Value (string with len <= 32)
                 RlpItemType::Value => {
                     require!(is_string => true);
-                    ifx!{is_long => {
+                    ifx! {is_long => {
                         config.leading_non_zero = LtGadget::construct(&mut cb.base, 0.expr(), first_byte);
                         require!(config.leading_non_zero => true);
-                    }}    
-                },
+                    }}
+                }
                 /// Hash (string with len == 32), can be empty
                 RlpItemType::Hash => {
                     require!(is_string => true);
                     require!(len => HASH_WIDTH);
-                },
+                }
                 /// Key (string with len <= 33)
                 RlpItemType::Key => {
                     require!(is_string => true);
-                    ifx!{is_long => {
+                    ifx! {is_long => {
                         config.leading_non_zero = LtGadget::construct(&mut cb.base, 0.expr(), first_byte);
                         require!(config.leading_non_zero => true);
                     }}
-                },
+                }
                 /// Nibbles has no limitation
-                RlpItemType::Nibbles => {},
+                RlpItemType::Nibbles => {}
             }
-             require!(config.below_limit => true);
+            require!(config.below_limit => true);
 
             config.num_bytes = Some(main_rlp.num_bytes.rot(meta, rot));
             config.len = Some(main_rlp.len.rot(meta, rot));
             config.mult_diff = Some(main_rlp.mult_diff.rot(meta, rot));
             config.rlc_content = Some(main_rlp.rlc_content.rot(meta, rot));
             config.rlc_rlp = Some(main_rlp.rlc_rlp.rot(meta, rot));
-            config.bytes = main_rlp.bytes.iter().map(|byte| byte.rot(meta, rot)).collect();
+            config.bytes = main_rlp
+                .bytes
+                .iter()
+                .map(|byte| byte.rot(meta, rot))
+                .collect();
             config.is_short = Some(main_rlp.rlp.value.is_short.rot(meta, rot));
             config.is_long = Some(main_rlp.rlp.value.is_long.rot(meta, rot));
 
@@ -1469,33 +1474,55 @@ impl<F: Field> RLPItemView<F> {
         item_type: RlpItemType,
     ) -> Result<(), Error> {
         if item_type != RlpItemType::Node {
-            self.below_limit.assign(region, offset, item.len().scalar(), max_length_inclusive(item_type).scalar())?;
+            self.below_limit.assign(
+                region,
+                offset,
+                item.len().scalar(),
+                max_length_inclusive(item_type).scalar(),
+            )?;
         }
         match item_type {
             RlpItemType::Node => {
                 if item.is_string() {
                     if item.is_long() {
-                        self.leading_non_zero.assign(region, offset, 0.scalar(), item.bytes[1].scalar())?;
+                        self.leading_non_zero.assign(
+                            region,
+                            offset,
+                            0.scalar(),
+                            item.bytes[1].scalar(),
+                        )?;
                     }
                 }
                 self.below_limit.assign(
-                    region, 
-                    offset, 
-                    item.len().scalar(), 
-                    (item.is_string() as usize * max_length_inclusive(item_type) + item.is_list() as usize * 32).scalar()
+                    region,
+                    offset,
+                    item.len().scalar(),
+                    (item.is_string() as usize * max_length_inclusive(item_type)
+                        + item.is_list() as usize * 32)
+                        .scalar(),
                 )?;
-            },
+            }
             RlpItemType::Value => {
                 if item.is_long() {
-                    self.leading_non_zero.assign(region, offset, 0.scalar(), item.bytes[1].scalar())?;
+                    self.leading_non_zero.assign(
+                        region,
+                        offset,
+                        0.scalar(),
+                        item.bytes[1].scalar(),
+                    )?;
                 }
-            },
+            }
             RlpItemType::Hash => (),
             RlpItemType::Key => {
                 if item.is_long() {
-                    self.leading_non_zero.assign(region, offset, 0.scalar(), item.bytes[1].scalar())?;
+                    self.leading_non_zero.assign(
+                        region,
+                        offset,
+                        0.scalar(),
+                        item.bytes[1].scalar(),
+                    )?;
                 }
-            },
+            }
             RlpItemType::Nibbles => (),
         };
         Ok(())

@@ -1,7 +1,0 @@
-
-running 1 test
-0 "src/mpt_circuit/tests/AccountExtensionTwoNibblesInEvenLevel.json"
-max expression degree: 20
-num lookups: 53
-num advices: 144
-num fixed: 9
