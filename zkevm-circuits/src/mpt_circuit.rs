@@ -257,10 +257,10 @@ impl<F: Field> MPTConfig<F> {
             meta,
             // Type, #cols, phase, permutable
             vec![
-                (MptCellType::StoragePhase1, 66, 0, false),
+                (MptCellType::StoragePhase1, 50, 0, false),
                 (MptCellType::StoragePhase2, 5, 0, false),
                 (MptCellType::Lookup(Table::Fixed), 3, 0, false),
-                (MptCellType::LookupByte, 8, 0, false),
+                (MptCellType::LookupByte, 4, 0, false),
             ],
             0,
             1,
@@ -271,7 +271,7 @@ impl<F: Field> MPTConfig<F> {
             vec![
                 (MptCellType::StoragePhase1, 20, 0, false),
                 (MptCellType::StoragePhase2, 5, 0, false),
-                (MptCellType::LookupByte, 8, 0, false),
+                (MptCellType::LookupByte, 5, 0, false),
                 (MptCellType::Lookup(Table::Fixed), 2, 0, false),
                 (MptCellType::Lookup(Table::Keccak), 1, 0, false),
             ],

@@ -1240,16 +1240,6 @@ impl<F: Field> MinEncodeGadget<F> {
 
         Ok(())
     }
-
-    pub fn max_length(item_type: RlpItemType) -> usize {
-        match item_type {
-            RlpItemType::Node => 32,
-            RlpItemType::Value => 32,
-            RlpItemType::Hash => 32,
-            RlpItemType::Key => 33,
-            RlpItemType::Nibbles => 32,
-        }
-    }
 }
 
 /// Main RLP item
@@ -1372,16 +1362,6 @@ impl<F: Field> MainRLPGadget<F> {
             FixedTableTag::RangeKeyLen16
         } else {
             FixedTableTag::RangeKeyLen256
-        }
-    }
-
-    pub fn max_length(item_type: RlpItemType) -> usize {
-        match item_type {
-            RlpItemType::Node => 33,
-            RlpItemType::Value => 33,
-            RlpItemType::Hash => 33,
-            RlpItemType::Key => 34,
-            RlpItemType::Nibbles => 33,
         }
     }
 }
