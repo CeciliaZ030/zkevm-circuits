@@ -23,6 +23,9 @@ mod start;
 mod storage_leaf;
 mod witness_row;
 
+mod be_rlp_gadgets;
+mod util;
+
 use self::{
     account_leaf::AccountLeafConfig,
     helpers::{key_memory, RLPItemView},
