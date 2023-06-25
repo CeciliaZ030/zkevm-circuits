@@ -4,7 +4,8 @@ use crate::{
         cached_region::{CachedRegion, ChallengeSet},
         cell_manager::{Cell, CellManager, CellType},
         constraint_builder::{
-            ConstraintBuilder, RLCChainable, RLCChainableValue, RLCable, RLCableValue,
+            ConstraintBuilder
+            // ConstraintBuilder, RLCChainable, RLCChainableValue, RLCable, RLCableValue,
         },
         gadgets::{IsEqualGadget, LtGadget},
         memory::MemoryBank,
@@ -17,6 +18,7 @@ use crate::{
             KEY_TERMINAL_PREFIX_EVEN, RLP_UNIT_NUM_BYTES,
         },
         rlp_gadgets::{get_ext_odd_nibble, get_terminal_odd_nibble},
+        util::*;
     },
     util::{Challenges, Expr},
 };
@@ -119,15 +121,14 @@ impl<F: Field> LeafKeyGadget<F> {
         &self,
         cb: &mut MPTConstraintBuilder<F>,
         rlp_key: RLPItemView<F>,
-        key_mult_prev: Expression<F>,
         is_key_odd: Expression<F>,
         r: &Expression<F>,
-    ) -> Expression<F> {
+    ) -> (Expression<F>, Expression<F>) {
         circuit!([meta, cb.base], {
             let calc_rlc = |cb: &mut MPTConstraintBuilder<F>,
                             bytes: &[Expression<F>],
-                            is_key_odd: Expression<F>| {
-                leaf_key_rlc(cb, bytes, key_mult_prev.expr(), is_key_odd.expr(), r)
+                            is_key_odd: Expression<F>| -> (Expression<F>, Expression<F>) {
+                leaf_key_rlc(cb, bytes, is_key_odd.expr(), r)
             };
             matchx! {
                 rlp_key.is_short() => {
@@ -163,6 +164,8 @@ impl<F: Field> LeafKeyGadget<F> {
 }
 
 impl LeafKeyWitness {
+    /// Given the rlp and mult of previous key part
+    /// calculate the rlc and mut of leaf key from current RLPItemWitness
     pub(crate) fn key<F: Field>(
         &self,
         rlp_key: RLPItemWitness,
@@ -182,11 +185,13 @@ impl LeafKeyWitness {
         let mut key_mult = key_mult;
         if !even_num_of_nibbles {
             // If odd number of nibbles, we have nibble+48 in s_advices[0].
-            key_rlc += F::from((rlp_key.bytes[start + 1] - 48) as u64) * key_mult;
+            // key_rlc += F::from((rlp_key.bytes[start + 1] - 48) as u64) * key_mult;
+            key_rlc *= r;
+            key_rlc += F::from((rlp_key.bytes[start + 2] - 48) as u64) * r;
             key_mult *= r;
         }
         (key_rlc, key_mult)
-            .rlc_chain_value(rlp_key.bytes[start + 2..start + 2 + len - 1].to_vec(), r)
+            .be_rlc_chain_value(rlp_key.bytes[start + 2..start + 2 + len - 1].to_vec(), r)
     }
 }
 
@@ -759,43 +764,52 @@ pub(crate) fn nibble_rlc<F: Field>(
     })
 }
 
+
+// [...prev...] [byte0=(
+//                  TERM_PREFIX, rlc the resti if even, include byte0-46 if odd
+//              ), rest...]
 pub(crate) fn leaf_key_rlc<F: Field>(
     cb: &mut MPTConstraintBuilder<F>,
     bytes: &[Expression<F>],
-    key_mult_prev: Expression<F>,
+    // key_mult_prev: Expression<F>,
     is_key_odd: Expression<F>,
     r: &Expression<F>,
-) -> Expression<F> {
+) -> (Expression<F>, Expression<F>) {
     circuit!([meta, cb.base], {
         // Add the odd nibble first if we have one.
         let (rlc, mult) = ifx! {is_key_odd => {
-            (get_terminal_odd_nibble(bytes[0].expr()) * key_mult_prev.expr(), r.expr())
+            (get_terminal_odd_nibble(bytes[0].expr()), r.expr())
         } elsex {
             require!(bytes[0] => KEY_TERMINAL_PREFIX_EVEN);
             (0.expr(), 1.expr())
         }};
-        (rlc, key_mult_prev * mult).rlc_chain(bytes[1..].rlc(r))
+        (rlc, mult).be_rlc_chain(bytes[1..].be_rlc(r))
     })
 }
 
+// [...prev...] [byte0=(
+//                  PREFIX, 0 if even, rlc byte0 with its own randomness if odd
+//              ), rest...]
 pub(crate) fn ext_key_rlc<F: Field>(
     cb: &mut MPTConstraintBuilder<F>,
     bytes: &[Expression<F>],
-    key_mult_prev: Expression<F>,
     is_odd: Expression<F>,
-    rlc_mult_first_odd: Expression<F>,
-    key_mult_first_odd: Expression<F>,
+    rlc_mult_first_odd: Expression<F>, // 1 if odd, 16 if even
+    key_mult_first_odd: Expression<F>, // 1 or additional_mult
     r: &Expression<F>,
-) -> Expression<F> {
+) -> (Expression<F>, Expression<F>) {
     circuit!([meta, cb.base], {
         // Add the odd nibble first if we have one.
         let (rlc, mult) = ifx! {is_odd => {
-            (get_ext_odd_nibble(bytes[0].expr()) * key_mult_prev.expr() * rlc_mult_first_odd, key_mult_first_odd.expr())
+            // (prev_mult) * byte0 * pos, next_mult
+            // (get_ext_odd_nibble(bytes[0].expr()) * key_mult_prev.expr() * rlc_mult_first_odd, key_mult_first_odd.expr())
+            (get_ext_odd_nibble(bytes[0].expr()) * rlc_mult_first_odd, key_mult_first_odd.expr())
+
         } elsex {
             require!(bytes[0] => KEY_PREFIX_EVEN);
             (0.expr(), 1.expr())
         }};
-        (rlc, key_mult_prev * mult).rlc_chain(bytes[1..].rlc(r))
+        (rlc, mult).be_rlc_chain(bytes[1..].be_rlc(r))
     })
 }
 

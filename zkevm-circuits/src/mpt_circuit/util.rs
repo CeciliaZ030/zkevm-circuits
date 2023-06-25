@@ -156,4 +156,3 @@ impl<F: Field> BERLCChainableValue<Value<F>, Vec<Value<F>>> for (Value<F>, Value
         (self.0 * other_rlc.1 + other_rlc.0, self.1 * other_rlc.1)
     }
 }
-
