@@ -3,7 +3,7 @@ use gadgets::util::{pow, Scalar};
 use halo2_proofs::plonk::{Error, Expression, VirtualCells};
 
 use super::{
-    helpers::{KeyDataWitness, ListKeyGadget, MPTConstraintBuilder},
+    helpers::{KeyDataWitness, ListKeyGadget, MPTConstraintBuilder, RLPItemView},
     rlp_gadgets::RLPItemWitness,
     witness_row::{ExtensionBranchRowType, Node},
     MPTContext,
@@ -42,6 +42,7 @@ pub(crate) struct ExtensionGadget<F> {
     is_not_hashed: LtGadget<F, 2>,
     is_key_part_odd: Cell<F>,
     mult_key: Cell<F>,
+    views: Vec<RLPItemView<F>>,
 
     // Post extension state
     post_state: Option<ExtState<F>>,
@@ -77,6 +78,7 @@ impl<F: Field> ExtensionGadget<F> {
                     RlpItemType::Nibbles,
                 ),
             ];
+            config.views.append(&mut key_items.to_vec());
             let rlp_value = [
                 ctx.rlp_item(
                     meta,
@@ -91,6 +93,7 @@ impl<F: Field> ExtensionGadget<F> {
                     RlpItemType::Node,
                 ),
             ];
+            config.views.append(&mut rlp_value.to_vec());
 
             config.rlp_key = ListKeyGadget::construct(cb, &key_items[0]);
             config.is_key_part_odd = cb.query_cell();
@@ -230,10 +233,15 @@ impl<F: Field> ExtensionGadget<F> {
             rlp_values[ExtensionBranchRowType::KeyS as usize].clone(),
             rlp_values[ExtensionBranchRowType::KeyC as usize].clone(),
         ];
-        let _value_bytes = [
+        self.views[0].assign(region, offset, &key_items[0], RlpItemType::Key)?;
+        self.views[1].assign(region, offset, &key_items[1], RlpItemType::Nibbles)?;
+
+        let value_bytes = [
             rlp_values[ExtensionBranchRowType::ValueS as usize].clone(),
             rlp_values[ExtensionBranchRowType::ValueC as usize].clone(),
         ];
+        self.views[2].assign(region, offset, &value_bytes[0], RlpItemType::Node)?;
+        self.views[3].assign(region, offset, &value_bytes[1], RlpItemType::Node)?;
 
         let rlp_key = self.rlp_key.assign(
             region,

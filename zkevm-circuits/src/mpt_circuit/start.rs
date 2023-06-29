@@ -1,5 +1,5 @@
 use super::{
-    helpers::Indexable,
+    helpers::{Indexable, RLPItemView},
     rlp_gadgets::RLPItemWitness,
     witness_row::{Node, StartRowType},
 };
@@ -24,6 +24,7 @@ use halo2_proofs::plonk::{Error, VirtualCells};
 #[derive(Clone, Debug, Default)]
 pub(crate) struct StartConfig<F> {
     proof_type: Cell<F>,
+    views: Vec<RLPItemView<F>>,
 }
 
 impl<F: Field> StartConfig<F> {
@@ -44,9 +45,9 @@ impl<F: Field> StartConfig<F> {
                 ctx.rlp_item(meta, cb, StartRowType::RootS as usize, RlpItemType::Value),
                 ctx.rlp_item(meta, cb, StartRowType::RootC as usize, RlpItemType::Value),
             ];
+            config.views.append(&mut root_items.to_vec());
 
             config.proof_type = cb.query_cell();
-
             let mut root = vec![0.expr(); 2];
             for is_s in [true, false] {
                 root[is_s.idx()] = root_items[is_s.idx()].rlc_content();
@@ -94,10 +95,12 @@ impl<F: Field> StartConfig<F> {
     ) -> Result<(), Error> {
         let start = &node.start.clone().unwrap();
 
-        let _root_items = [
+        let root_items = [
             rlp_values[StartRowType::RootS as usize].clone(),
             rlp_values[StartRowType::RootC as usize].clone(),
         ];
+        self.views[0].assign(region, offset, &root_items[0], RlpItemType::Value)?;
+        self.views[1].assign(region, offset, &root_items[1], RlpItemType::Value)?;
 
         self.proof_type
             .assign(region, offset, start.proof_type.scalar())?;

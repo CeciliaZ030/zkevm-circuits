@@ -28,7 +28,7 @@ use crate::{
 };
 
 use super::{
-    helpers::{Indexable, KeyDataWitness, ListKeyGadget, WrongGadget},
+    helpers::{Indexable, KeyDataWitness, ListKeyGadget, RLPItemView, WrongGadget},
     rlp_gadgets::{RLPItemWitness, RLPValueGadget},
     witness_row::{Node, StorageRowType},
 };
@@ -48,6 +48,7 @@ pub(crate) struct StorageLeafConfig<F> {
     wrong: WrongGadget<F>,
     is_storage_mod_proof: IsEqualGadget<F>,
     is_non_existing_storage_proof: IsEqualGadget<F>,
+    views: Vec<RLPItemView<F>>,
 }
 
 impl<F: Field> StorageLeafConfig<F> {
@@ -70,6 +71,8 @@ impl<F: Field> StorageLeafConfig<F> {
                 ctx.rlp_item(meta, cb, StorageRowType::KeyS as usize, RlpItemType::Key),
                 ctx.rlp_item(meta, cb, StorageRowType::KeyC as usize, RlpItemType::Key),
             ];
+            config.views.append(&mut key_items.to_vec());
+
             config.value_rlp_bytes = [cb.base.query_bytes(), cb.base.query_bytes()];
             let value_item = [
                 ctx.rlp_item(
@@ -85,10 +88,14 @@ impl<F: Field> StorageLeafConfig<F> {
                     RlpItemType::Value,
                 ),
             ];
+            config.views.append(&mut value_item.to_vec());
+
             let drifted_item =
                 ctx.rlp_item(meta, cb, StorageRowType::Drifted as usize, RlpItemType::Key);
             let wrong_item =
                 ctx.rlp_item(meta, cb, StorageRowType::Wrong as usize, RlpItemType::Key);
+            config.views.push(drifted_item.clone());
+            config.views.push(wrong_item.clone());
 
             config.main_data =
                 MainData::load("main storage", cb, &ctx.memory[main_memory()], 0.expr());
@@ -290,12 +297,19 @@ impl<F: Field> StorageLeafConfig<F> {
             rlp_values[StorageRowType::KeyS as usize].clone(),
             rlp_values[StorageRowType::KeyC as usize].clone(),
         ];
+        self.views[0].assign(region, offset, &key_items[0], RlpItemType::Key)?;
+        self.views[1].assign(region, offset, &key_items[1], RlpItemType::Key)?;
         let value_item = [
             rlp_values[StorageRowType::ValueS as usize].clone(),
             rlp_values[StorageRowType::ValueC as usize].clone(),
         ];
+        self.views[2].assign(region, offset, &value_item[0], RlpItemType::Value)?;
+        self.views[3].assign(region, offset, &value_item[1], RlpItemType::Value)?;
+
         let drifted_item = rlp_values[StorageRowType::Drifted as usize].clone();
         let wrong_item = rlp_values[StorageRowType::Wrong as usize].clone();
+        self.views[4].assign(region, offset, &drifted_item, RlpItemType::Key)?;
+        self.views[5].assign(region, offset, &wrong_item, RlpItemType::Key)?;
 
         let main_data =
             self.main_data

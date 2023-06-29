@@ -154,7 +154,8 @@ impl<F: Field> MPTContext<F> {
         idx: usize,
         item_type: RlpItemType,
     ) -> RLPItemView<F> {
-        self.rlp_item.create_view(meta, cb, idx, item_type)
+        RLPItemView::construct(self.rlp_item.clone(), meta, cb, idx, item_type)
+        // self.rlp_item.create_view(meta, cb, idx, item_type)
     }
 }
 
@@ -270,7 +271,7 @@ impl<F: Field> MPTConfig<F> {
             vec![
                 (MptCellType::StoragePhase1, 20, 0, false),
                 (MptCellType::StoragePhase2, 5, 0, false),
-                (MptCellType::LookupByte, 4, 0, false),
+                (MptCellType::LookupByte, 5, 0, false),
                 (MptCellType::Lookup(Table::Fixed), 2, 0, false),
                 (MptCellType::Lookup(Table::Keccak), 1, 0, false),
             ],
