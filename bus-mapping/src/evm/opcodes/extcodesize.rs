@@ -89,15 +89,15 @@ mod extcodesize_tests {
         circuit_input_builder::ExecState,
         mock::BlockData,
         operation::{AccountOp, CallContextOp, StackOp, RW},
+        state_db::CodeDB,
     };
     use eth_types::{
         bytecode,
         evm_types::{OpcodeId, StackAddress},
         geth_types::{Account, GethData},
-        Bytecode, Word, U256,
+        Bytecode, U256,
     };
-    use ethers_core::utils::keccak256;
-    use mock::{TestContext, MOCK_1_ETH, MOCK_ACCOUNTS, MOCK_CODES};
+    use mock::{TestContext, MOCK_1_ETH, MOCK_ACCOUNTS, MOCK_CODES, MOCK_COINBASE};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -151,7 +151,7 @@ mod extcodesize_tests {
             |mut txs, accs| {
                 txs[0].to(accs[0].address).from(accs[2].address);
             },
-            |block, _tx| block.number(0xcafeu64),
+            |block, _tx| block.author(*MOCK_COINBASE).number(0xcafeu64),
         )
         .unwrap()
         .into();
@@ -233,7 +233,7 @@ mod extcodesize_tests {
             }
         );
 
-        let code_hash = Word::from(keccak256(account.code.clone()));
+        let code_hash = CodeDB::hash(&account.code).to_word();
         let operation = &container.account[indices[5].as_usize()];
         assert_eq!(operation.rw(), RW::READ);
         assert_eq!(

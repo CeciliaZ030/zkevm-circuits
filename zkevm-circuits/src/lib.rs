@@ -18,10 +18,12 @@
 #![deny(clippy::debug_assert_with_mut_call)]
 
 pub mod bytecode_circuit;
+pub mod circuit_tools;
 pub mod copy_circuit;
 pub mod evm_circuit;
 pub mod exp_circuit;
 pub mod keccak_circuit;
+pub mod mpt_circuit;
 pub mod pi_circuit;
 pub mod root_circuit;
 pub mod state_circuit;
@@ -30,9 +32,6 @@ pub mod table;
 
 #[cfg(any(feature = "test", test))]
 pub mod test_util;
-
-#[cfg(any(feature = "test", test))]
-mod stats;
 
 pub mod tx_circuit;
 pub mod util;

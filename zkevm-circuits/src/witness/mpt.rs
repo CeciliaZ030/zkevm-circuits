@@ -22,9 +22,9 @@ impl MptUpdate {
         let proof_type = match self.key {
             Key::AccountStorage { .. } => {
                 if self.old_value.is_zero() && self.new_value.is_zero() {
-                    MPTProofType::NonExistingStorageProof
+                    MPTProofType::StorageDoesNotExist
                 } else {
-                    MPTProofType::StorageMod
+                    MPTProofType::StorageChanged
                 }
             }
             Key::Account { field_tag, .. } => field_tag.into(),
@@ -41,8 +41,16 @@ pub struct MptUpdates {
 }
 
 /// The field element encoding of an MPT update, which is used by the MptTable
-#[derive(Debug, Clone, Copy)]
-pub struct MptUpdateRow<F>(pub(crate) [F; 7]);
+#[derive(Default, Clone, Copy, Debug)]
+pub struct MptUpdateRow<F: Clone> {
+    pub(crate) address_rlc: F,
+    pub(crate) proof_type: F,
+    pub(crate) key_rlc: F,
+    pub(crate) value_prev: F,
+    pub(crate) value: F,
+    pub(crate) root_prev: F,
+    pub(crate) root: F,
+}
 
 impl MptUpdates {
     pub(crate) fn old_root(&self) -> Word {
@@ -97,15 +105,15 @@ impl MptUpdates {
                 let (new_value, old_value) = randomness
                     .map(|randomness| update.value_assignments(randomness))
                     .unzip();
-                MptUpdateRow([
-                    Value::known(update.key.address()),
-                    randomness.map(|randomness| update.key.storage_key(randomness)),
-                    Value::known(update.proof_type()),
-                    new_root,
-                    old_root,
-                    new_value,
-                    old_value,
-                ])
+                MptUpdateRow {
+                    address_rlc: Value::known(update.key.address()),
+                    key_rlc: randomness.map(|randomness| update.key.storage_key(randomness)),
+                    proof_type: Value::known(update.proof_type()),
+                    root: new_root,
+                    root_prev: old_root,
+                    value: new_value,
+                    value_prev: old_value,
+                }
             })
             .collect()
     }
@@ -188,7 +196,7 @@ impl Key {
     }
     fn storage_key<F: Field>(&self, randomness: F) -> F {
         match self {
-            Self::Account { .. } => F::zero(),
+            Self::Account { .. } => F::ZERO,
             Self::AccountStorage { storage_key, .. } => {
                 rlc::value(&storage_key.to_le_bytes(), randomness)
             }
@@ -196,11 +204,19 @@ impl Key {
     }
 }
 
-impl<F> MptUpdateRow<F> {
+impl<F: Clone> MptUpdateRow<F> {
     /// The individual values of the row, in the column order used by the
     /// MptTable
-    pub fn values(&self) -> impl Iterator<Item = &F> {
-        self.0.iter()
+    pub fn values(&self) -> [F; 7] {
+        [
+            self.address_rlc.clone(),
+            self.proof_type.clone(),
+            self.key_rlc.clone(),
+            self.value_prev.clone(),
+            self.value.clone(),
+            self.root_prev.clone(),
+            self.root.clone(),
+        ]
     }
 }
 
