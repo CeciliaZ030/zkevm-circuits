@@ -1448,6 +1448,13 @@ macro_rules! circuit {
         }
 
         #[allow(unused_macros)]
+        macro_rules! c {
+            ($column:expr) => {{
+                $meta.query_challenge($column.clone())
+            }};
+        }
+
+        #[allow(unused_macros)]
         macro_rules! x {
             ($column:expr, $rot:expr) => {{
                 $meta.query_any($column.clone(), Rotation($rot as i32))

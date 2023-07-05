@@ -1,11 +1,11 @@
 
 use std::vec;
 
-use crate::circuit_tools::cached_region::{self, ChallengeSet};
+
 use crate::circuit_tools::cell_manager::{Cell, CellManager, CellType};
 use crate::circuit_tools::constraint_builder:: ConstraintBuilder;
 use crate::circuit_tools::cached_region::CachedRegion;
-use crate::{evm_circuit::util::rlc, table::LookupTable, util::Expr};
+use crate::{table::LookupTable, util::Expr};
 
 
 use eth_types::Field;
@@ -15,10 +15,10 @@ use halo2_proofs::circuit::{SimpleFloorPlanner, Layouter};
 
 use halo2_proofs::dev::MockProver;
 use halo2_proofs::halo2curves::bn256::Fr;
-use halo2_proofs::plonk::{Any, Circuit, FirstPhase, Challenge, SecondPhase, ThirdPhase, Fixed, Selector};
+use halo2_proofs::plonk::{Any, Circuit, FirstPhase, Challenge, Fixed, Selector};
 use halo2_proofs::{
     circuit::{Value},
-    plonk::{ConstraintSystem, Advice, Column, Error, Expression},
+    plonk::{ConstraintSystem, Advice, Column, Error},
     poly::Rotation,
 };
 
@@ -111,7 +111,7 @@ impl<F: Field> TestConfig<F> {
             0,
             5,
         );
-        let mut cb:  ConstraintBuilder<F, TestCellType> =  ConstraintBuilder::new(MAX_DEG,  Some(cm), None);
+        let mut cb =  ConstraintBuilder::new(MAX_DEG,  Some(cm), None);
 
         let mut cell_gadget = CellGadget::default();
         meta.create_gate("Test Gate", |meta| {
@@ -149,7 +149,7 @@ impl<F: Field> TestConfig<F> {
             || "cell gadget",
             |mut region| {
 
-                self.sel.enable(&mut region, 0);
+                self.sel.enable(&mut region, 0)?;
                 
                 for offset in 0..20 {
                     assignf!(region, (self.q_enable, offset) => 1.scalar())?;
