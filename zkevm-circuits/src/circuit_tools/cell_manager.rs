@@ -15,7 +15,7 @@ use halo2_proofs::{
     poly::Rotation,
 };
 use lazy_static::__Deref;
-use std::{cmp::Ordering, collections::{BTreeMap, HashMap}, fmt::Debug, hash::Hash, cmp::{max, Ordering}};
+use std::{collections::{BTreeMap, HashMap}, fmt::Debug, hash::Hash, cmp::{max, Ordering}};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Cell<F> {
