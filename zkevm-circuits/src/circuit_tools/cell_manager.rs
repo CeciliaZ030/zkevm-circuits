@@ -264,6 +264,7 @@ impl<F: Field, C: CellType> CellManager<F, C> {
         offset: usize,
         max_height: usize,
     ) -> Self {
+        assert!(max_height >= 1);
         let configs = configs
             .into_iter()
             .map(|c| c.into())

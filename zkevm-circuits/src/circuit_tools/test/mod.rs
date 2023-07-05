@@ -13,6 +13,8 @@ use gadgets::util::Scalar;
 use halo2_proofs::circuit::{SimpleFloorPlanner, Layouter};
 
 
+use halo2_proofs::dev::MockProver;
+use halo2_proofs::halo2curves::bn256::Fr;
 use halo2_proofs::plonk::{Any, Circuit, FirstPhase, Challenge, SecondPhase, ThirdPhase, Fixed, Selector};
 use halo2_proofs::{
     circuit::{Value},
@@ -20,7 +22,7 @@ use halo2_proofs::{
     poly::Rotation,
 };
 
-
+mod query_and_branch;
 
 /// To Test:
 ///    1. Constrain advices with cells
@@ -48,13 +50,13 @@ pub enum TestCellType {
 
 impl Default for TestCellType {
     fn default() -> Self {
-        CellType::PhaseOne
+        TestCellType::PhaseOne
     }
 }
 
 impl CellType for TestCellType {
     fn byte_type() -> Option<Self> {
-        Some(CellType::PhaseOne)
+        Some(TestCellType::PhaseOne)
     }
 
     fn storage_for_phase(phase: u8) -> Self {
@@ -81,7 +83,6 @@ pub struct TestConfig<F> {
     pub(crate) sel: Selector,
     pub(crate) q_enable: Column<Fixed>,
     pub(crate) q_count: Column<Advice>,
-    pub(crate) cell_columns: Vec<Column<Advice>>,
     pub(crate) cell_gadget: CellGadget<F>,
     pub(crate) table: TestTable,
 }
@@ -91,41 +92,32 @@ impl<F: Field> TestConfig<F> {
     pub fn new(
         meta: &mut ConstraintSystem<F>, 
         table: TestTable, 
-        r1: Challenge
+        randomness: Challenge
     ) -> Self {
         
         // Get columns
         let sel = meta.selector();
         let q_enable = meta.fixed_column();
         let q_count = meta.advice_column();
-        let cell_columns = (0..10)
-            .map(|i| 
-                match i {
-                    0..=2 => meta.advice_column_in(FirstPhase),
-                    3..=5 => meta.advice_column_in(SecondPhase),
-                    6..=9 => meta.advice_column_in(ThirdPhase),
-                    10 => meta.advice_column_in(FirstPhase), // Copy
-                    _ => unreachable!(),
-                }
-            ).collect::<Vec<_>>();
 
         // Init cell manager and constraint builder
         let cm = CellManager::new(
             meta,
             vec![
-                (CellType::PhaseOne, 3, 0, false),
-                (CellType::PhaseTwo, 3, 0, false),
-                (CellType::LookupTestTable, 3, 0, false),
+                (TestCellType::PhaseOne, 3, 1, false),
+                (TestCellType::PhaseTwo, 3, 2, false),
+                (TestCellType::LookupTestTable, 3, 1, false),
             ],
-            vec![&table],
             0,
+            5,
         );
-        let mut cb:  ConstraintBuilder<F, CellType> =  ConstraintBuilder::new(MAX_DEG, 1.expr(), Some(cm));
+        let mut cb:  ConstraintBuilder<F, TestCellType> =  ConstraintBuilder::new(MAX_DEG,  Some(cm), None);
 
         let mut cell_gadget = CellGadget::default();
         meta.create_gate("Test Gate", |meta| {
             // Config row counts
             circuit!([meta, cb], {
+                cb.lookup_challenge = Some(meta.query_challenge(randomness)); 
                 // All configuration of inner gadgets must be wrapped in ifx!
                 // it pushes a condition into cb, which is gonna be multiplied with the upcoming constraints.
                 // then if you turn off q_enable, your inner gadgets will be disabled.
@@ -133,11 +125,7 @@ impl<F: Field> TestConfig<F> {
                 ifx!(f!(q_enable) => {
                     require!(a!(q_count, 1) => a!(q_count) + 1.expr());
                     // Init Gadgets
-                    cell_gadget = CellGadget::configure(
-                        &mut cb, 
-                        // Convert Challenge into Expression<F>
-                        meta.query_challenge(r1),
-                    );
+                    cell_gadget = CellGadget::configure(&mut cb, );
                 })
             });
             cb.build_constraints()
@@ -147,7 +135,6 @@ impl<F: Field> TestConfig<F> {
             sel,
             q_enable,
             q_count,
-            cell_columns,
             cell_gadget,
             table,
         }
@@ -156,7 +143,7 @@ impl<F: Field> TestConfig<F> {
     pub fn assign(
         &self, 
         layouter: &mut impl Layouter<F>,
-        r1: Value<F>,
+        randomness: Value<F>,
     ) -> Result<(), Error> {
         layouter.assign_region(
             || "cell gadget",
@@ -173,8 +160,9 @@ impl<F: Field> TestConfig<F> {
                 // Value of challenge is obtained from layouter.
                 // We query it once during synthesis and
                 // make it accessable across Config through CachedRegion. 
-                let challenges = [r1];
-                let mut cached_region = cached_region::CachedRegion::new(&mut region, &challenges, 0.scalar(), 0.scalar());
+                let mut lookup_challenge = F::ZERO;
+                randomness.map(|r| lookup_challenge = r);
+                let mut cached_region = CachedRegion::new(&mut region, lookup_challenge, 12345.scalar());
                 self.cell_gadget.assign(&mut cached_region, 0)
             },
         )
@@ -205,8 +193,8 @@ impl<F: Field> TestConfig<F> {
 #[derive(Clone, Debug, Default)]
 pub struct CellGadget<F> {
     // (a, b) in lookup
-    // a, r1 * b == c
-    //  where r1 is phase1 challenge
+    // a, randomness * b == c
+    //  where randomness is phase1 challenge
     // a == d
     a: Cell<F>,
     b: Cell<F>,
@@ -216,39 +204,33 @@ pub struct CellGadget<F> {
 
 
 impl<F: Field> CellGadget<F> {
-    pub fn configure(cb: &mut  ConstraintBuilder<F, TestCellType>, r1: Expression<F>) -> Self {
+    pub fn configure(cb: &mut  ConstraintBuilder<F, TestCellType>) -> Self {
         let a = cb.query_default();
         let b = cb.query_default();
-        // c depends on Phase1 Challenge r1
+        // c depends on Phase1 Challenge randomness
         let c = cb.query_one(TestCellType::PhaseTwo);
         let d = cb.query_default();        
         circuit!([meta, cb], {
             //require!((a, b) => @format!("test_lookup"));
-            require!(c => a.expr() + b.expr() * r1);
+            require!(c => a.expr() + b.expr() * cb.lookup_challenge.clone().unwrap());
             require!(a => d.expr());
         });
 
         CellGadget { a, b, c, d }
     }
 
-    pub fn assign<S: ChallengeSet<F>>(
+    pub fn assign(
         &self, 
-        region: &mut CachedRegion<'_, '_, F, S>, 
+        region: &mut CachedRegion<'_, '_, F>, 
         offset: usize, 
     ) -> Result<(), Error>{
-
-        // All challenges are returned as defined struct or Vec<&Value<F>>,
-        // we map them to Vec<F> for calculations.
-        let mut r = F::ONE;
-        region.challenges().indexed()[0].map(|r_val| r = r_val);
-
         // Assign values to cells
         self.a.assign(region, offset, 2u64.scalar())?;
         self.b.assign(region, offset, 3u64.scalar())?;
         self.c.assign(
             region, 
             offset,
-            F::from(2u64) + F::from(3u64) * r
+            F::from(2u64) + F::from(3u64) * region.lookup_challenge()
         )?;
         self.d.assign(region, offset, 2u64.scalar())?;
         Ok(())
@@ -281,20 +263,20 @@ impl<F: Field> Circuit<F> for TestCircuit<F> {
             b: meta.fixed_column(),
         };
         let _dummy_phase1 = meta.advice_column_in(FirstPhase);
-        let r1 = meta.challenge_usable_after(FirstPhase);
+        let randomness = meta.challenge_usable_after(FirstPhase);
         
-        let config = TestConfig::new(meta, table, r1);
-        (config, r1)
+        let config = TestConfig::new(meta, table, randomness);
+        (config, randomness)
     }
 
     fn synthesize(
         &self, 
-        (config, r1): Self::Config, 
+        (config, randomness): Self::Config, 
         mut layouter: impl halo2_proofs::circuit::Layouter<F>
     ) -> Result<(), Error> {
-        let r1 = layouter.get_challenge(r1);
+        let randomness = layouter.get_challenge(randomness);
         config.load_fixed_table(&mut layouter)?;
-        config.assign(&mut layouter, r1)
+        config.assign(&mut layouter, randomness)
     }
 }
 
