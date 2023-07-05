@@ -54,6 +54,7 @@ mod tests {
         let circuit = MPTCircuit::<Fr> {
             nodes,
             keccak_data,
+            degree: degree as usize,
             randomness,
         };
 

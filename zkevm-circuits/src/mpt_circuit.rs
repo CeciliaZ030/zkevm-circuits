@@ -723,11 +723,15 @@ impl<F: Field> MPTConfig<F> {
 
 /// MPT Circuit for proving the storage modification is valid.
 #[derive(Default)]
-struct MPTCircuit<F> {
-    nodes: Vec<Node>,
-    keccak_data: Vec<Vec<u8>>,
-    degree: usize,
-    randomness: F,
+pub struct MPTCircuit<F> {
+    ///
+    pub nodes: Vec<Node>,
+    ///
+    pub keccak_data: Vec<Vec<u8>>,
+    ///
+    pub degree: usize,
+    ///
+    pub randomness: F,
 }
 
 /// Super Circuit configuration parameters
