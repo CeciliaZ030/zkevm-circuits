@@ -23,6 +23,7 @@ use halo2_proofs::{
 };
 
 mod query_and_branch;
+mod shuffle;
 
 /// To Test:
 ///    1. Constrain advices with cells
