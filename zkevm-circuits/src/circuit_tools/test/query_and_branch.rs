@@ -49,15 +49,26 @@ impl<F: Field> TestConfig<F> {
 
         meta.create_gate("Test", |meta| {
             circuit!([meta, cb], {
-                // Fixed column can be used interchangably with selector
-                // BUT Advice cannot!
+                // Fixed column with ifx! equivalents to selector
+                // BUT Advice does not
                 ifx!(f!(q_enable) => {
                     ifx!(a!(a) => {
                         require!(a!(res) => a!(b) + f!(c)); 
                     } elsex {
                         require!(a!(res) => a!(b) + c!(r)); 
                         
-                    })
+                    });
+                    // Matchx! adds the same set of constraints as ifx!
+                    matchx!(
+                        a!(a) => {
+                            require!(a!(res) => a!(b) + f!(c)); 
+                        },
+                        not!(a!(a)) => {
+                            require!(a!(res) => a!(b) + c!(r)); 
+                            
+                        },
+                        _ => unreachablex!(),
+                    );
                 })
             });
             cb.build_constraints()
