@@ -11,13 +11,12 @@ use halo2_proofs::{
 use crate::circuit_tools::{constraint_builder:: ConstraintBuilder, cell_manager::CellType};
 
 #[derive(Clone)]
-pub struct TestConfig<F> {
+pub struct TestConfig {
     pub(crate) q_enable: Column<Fixed>,
     pub(crate) a: Column<Advice>,
     pub(crate) b: Column<Advice>,
     pub(crate) c: Column<Fixed>,
     pub(crate) res: Column<Advice>,
-    _phantom: PhantomData<F>,
 }
 
 #[derive(Clone, Copy, Debug, num_enum::Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -36,8 +35,8 @@ impl CellType for TestCellType{
 }
 
 
-impl<F: Field> TestConfig<F> {
-    pub fn new(meta: &mut ConstraintSystem<F>, r: Challenge) -> Self {
+impl TestConfig {
+    pub fn new<F: Field>(meta: &mut ConstraintSystem<F>, r: Challenge) -> Self {
         let q_enable = meta.fixed_column();
         let a = meta.advice_column();
         let b = meta.advice_column_in(SecondPhase);
@@ -79,11 +78,10 @@ impl<F: Field> TestConfig<F> {
             b, 
             c, 
             res,
-            _phantom: PhantomData 
         }
     }
 
-    pub fn assign(
+    pub fn assign<F: Field>(
         &self, 
         layouter: &mut impl Layouter<F>,
         r: F,
@@ -116,7 +114,7 @@ struct TestCircuit<F> {
 }
 
 impl<F: Field> Circuit<F> for TestCircuit<F> {
-    type Config = (TestConfig<F>, Challenge);
+    type Config = (TestConfig, Challenge);
     type FloorPlanner = SimpleFloorPlanner;
     type Params = ();
 
