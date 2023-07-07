@@ -8,15 +8,17 @@ use halo2_proofs::{
     poly::Rotation,
 };
 use rand::RngCore;
+use rand_chacha::rand_core::OsRng;
 
-use crate::circuit_tools::{constraint_builder:: ConstraintBuilder, cell_manager::{CellType, CellManager, Cell}};
+use crate::circuit_tools::{constraint_builder:: ConstraintBuilder, cell_manager::{CellType, CellManager, Cell}, cached_region::CachedRegion};
 
 
 #[derive(Clone)]
-pub struct ShuffleConfig<const W: usize, const H: usize> {
+pub struct ShuffleConfig<const W: usize, const H: usize, F: Field> {
     q_shuffle: Column<Fixed>,
     original: [Column<Advice>; W],
     shuffled: [Column<Advice>; W],
+    cb: ConstraintBuilder<F, ShuffleCells>
 }
 
 #[derive(Clone, Copy, Debug, num_enum::Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -41,8 +43,8 @@ impl CellType for ShuffleCells{
 }
 
 
-impl<const W: usize, const H: usize> ShuffleConfig<W, H> {
-    pub fn new<F: Field>(meta: &mut ConstraintSystem<F>) -> Self {        
+impl<const W: usize, const H: usize, F: Field> ShuffleConfig<W, H, F> {
+    pub fn new(meta: &mut ConstraintSystem<F>) -> Self {        
         let q_shuffle = meta.fixed_column();
         let cm = CellManager::new(
             meta,
@@ -82,32 +84,59 @@ impl<const W: usize, const H: usize> ShuffleConfig<W, H> {
                         }
                         require!(o.expr() => dest_set);
                     }
+                    cb.split_constraints_expression();
                 });
-
-            });
-            cb.build_constraints()
-                .into_iter()
-                .map(|(name, constraint)| 
-                    cb.store_expression(name, constraint, ShuffleCells::Storage)
-                ).collect::<Vec<Expression<F>>>()
+                cb.build_constraints()
+            })
         });
         
         ShuffleConfig { 
             q_shuffle,
             original, 
-            shuffled
+            shuffled,
+            cb
         }
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct ShuffleCircuit<F: Field, const W: usize, const H: usize> {
-    original: Value<[[F; H]; W]>,
-    shuffled: Value<[[F; H]; W]>,
+    original: [[F; H]; W],
+    shuffled: [[F; H]; W],
+}
+
+impl<F: Field, const W: usize, const H: usize>  ShuffleCircuit<F, W, H> {
+    pub fn new<R: RngCore>(rng: &mut R) -> Self {
+        let original = [(); W].map(|_| [(); H].map(|_| F::random(&mut *rng)));
+        Self {
+            original,
+            shuffled: Self::shuffled(original, rng)
+        }
+    }
+    
+    fn shuffled<R: RngCore>(
+        original: [[F; H]; W],
+        rng: &mut R,
+    ) -> [[F; H]; W] {
+        let mut shuffled = original;
+    
+        for row in (1..H).rev() {
+            for column in shuffled.iter_mut() {
+                let rand_row = (rng.next_u32() as usize) % row;
+                column.swap(row, rand_row);
+            }
+        }
+        for col in (1..W).rev() {
+            let rand_col = (rng.next_u32() as usize) % col;
+            shuffled.swap(col, rand_col);
+        }
+    
+        shuffled
+    }
 }
 
 impl<F: Field, const W: usize, const H: usize> Circuit<F> for ShuffleCircuit<F, W, H> {
-    type Config = ShuffleConfig<5, 6>;
+    type Config = ShuffleConfig<5, 6, F>;
     type FloorPlanner = SimpleFloorPlanner;
     type Params = ();
 
@@ -127,10 +156,23 @@ impl<F: Field, const W: usize, const H: usize> Circuit<F> for ShuffleCircuit<F, 
         mut layouter: impl Layouter<F>
     ) -> Result<(), halo2_proofs::plonk::Error> {
         layouter.assign_region(|| "Shuffle", |mut region| {
-            for offset in (0..H) {
-                
+            let mut region = CachedRegion::new(&mut region, 1.scalar(), 2.scalar());
+            assignf!(region, (config.q_shuffle, 0) => true.scalar());
+            for h in (0..H) {
+                config.original
+                    .iter()
+                    .zip(self.original.iter())
+                    .for_each(| (col, val) | {
+                        assign!(region, (col.clone(), h) => val[h]);
+                    });
+                config.shuffled
+                    .iter()
+                    .zip(self.shuffled.iter())
+                    .for_each(| (col, val) | {
+                        assign!(region, (col.clone(), h) => val[h]);
+                    })
             }
-            todo!()
+            region.assign_stored_expressions(&config.cb, &[Value::known(1.scalar())])
         })
     }
 }
@@ -140,27 +182,11 @@ fn test() {
 
     use halo2_proofs::{ dev::MockProver, halo2curves::bn256::Fr};
 
-    let circuit = ShuffleCircuit::<Fr, 3, 4>::default();
+    const W: usize = 3;
+    const H: usize = 4;
+
+    let circuit = ShuffleCircuit::<Fr, W, H>::new(&mut OsRng);
     let prover = MockProver::<Fr>::run(6, &circuit, vec![]).unwrap();
-    // prover.assert_satisfied_par();
+    prover.assert_satisfied_par();
 }
 
-fn rand_2d_array<F: Field, R: RngCore, const W: usize, const H: usize>(rng: &mut R) -> [[F; H]; W] {
-    [(); W].map(|_| [(); H].map(|_| F::random(&mut *rng)))
-}
-
-fn shuffled<F: Field, R: RngCore, const W: usize, const H: usize>(
-    original: [[F; H]; W],
-    rng: &mut R,
-) -> [[F; H]; W] {
-    let mut shuffled = original;
-
-    for row in (1..H).rev() {
-        for column in shuffled.iter_mut() {
-            let rand_row = (rng.next_u32() as usize) % row;
-            column.swap(row, rand_row);
-        }
-    }
-
-    shuffled
-}

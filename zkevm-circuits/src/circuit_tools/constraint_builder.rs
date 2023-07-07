@@ -268,6 +268,15 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         }
     }
 
+    pub(crate) fn split_constraints_expression(&mut self) {
+        self.constraints = self.constraints.clone()
+            .into_iter()
+            .map(|(name, c)| {
+                (name, self.split_expression(name, c.clone()))
+            })
+            .collect::<Vec<_>>();
+    }
+
     pub(crate) fn build_constraints(&self) -> Vec<(&'static str, Expression<F>)> {
         self.constraints.clone()
     }
