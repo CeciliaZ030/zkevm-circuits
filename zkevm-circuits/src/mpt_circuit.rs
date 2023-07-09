@@ -249,22 +249,14 @@ impl<F: Field> MPTConfig<F> {
 
         let mut state_machine = StateMachineConfig::construct(meta);
         let mut rlp_item = MainRLPGadget::default();
-
-        // let memory_columns = (0..5).map(|_| meta.advice_column()).collect::<Vec<_>>();
-        // let mut memory = Memory::new(memory_columns);
-        // memory.allocate(meta, key_memory(false), MptCellType::MemKeyCTable);
-        // memory.allocate(meta, key_memory(true), MptCellType::MemKeySTable);
-        // memory.allocate(meta, parent_memory(false), MptCellType::MemParentCTable);
-        // memory.allocate(meta, parent_memory(true), MptCellType::MemParentSTable);
-        // memory.allocate(meta, main_memory(), MptCellType::MemMainTable);
         let memory = Memory::new(
             meta,
             vec![
-                (MptCellType::MemKeyCInput, 3),
-                (MptCellType::MemKeySInput, 3),
-                (MptCellType::MemParentCInput, 3),
-                (MptCellType::MemParentSInput, 3),
-                (MptCellType::MemMainInput, 3)
+                (MptCellType::MemKeyC, 3),
+                (MptCellType::MemKeyS, 3),
+                (MptCellType::MemParentC, 3),
+                (MptCellType::MemParentS, 3),
+                (MptCellType::MemMain, 3)
             ],
             0,
             50,
@@ -302,27 +294,10 @@ impl<F: Field> MPTConfig<F> {
                 (MptCellType::Lookup(Table::Fixed), 3, 3, false),
                 (MptCellType::Lookup(Table::Keccak), 1, 3, false),
                 (MptCellType::Lookup(Table::Exp), 2, 3, false),
-                // (MptCellType::MemParentSInput, 1, 3, false),
-                // (MptCellType::MemParentSTable, 1, 3, false),
-                // (MptCellType::MemParentCInput, 1, 3, false),
-                // (MptCellType::MemParentCTable, 1, 3, false),
-                // (MptCellType::MemKeySInput, 1, 3, false),
-                // (MptCellType::MemKeySTable, 1, 3, false),
-                // (MptCellType::MemKeyCInput, 1, 3, false),
-                // (MptCellType::MemKeyCTable, 1, 3, false),
-                // (MptCellType::MemMainInput, 1, 3, false),
-                // (MptCellType::MemMainTable, 1, 3, false),
             ],
             0,
             50,
         );
-
-        // let parent_s_table = DynamicLookupTable::from(&state_cm, MptCellType::MemParentSTable);
-        // let parent_c_table = DynamicLookupTable::from(&state_cm, MptCellType::MemParentCTable);
-        // let key_s_table = DynamicLookupTable::from(&state_cm, MptCellType::MemKeySTable);
-        // let key_c_table = DynamicLookupTable::from(&state_cm, MptCellType::MemKeyCTable);
-        // let main_table = DynamicLookupTable::from(&state_cm, MptCellType::MemMainTable);
-
         let r = 123456.expr();
         let mut cb = MPTConstraintBuilder::new(5, Some(challenges.clone()), None, r.expr());
         meta.create_gate("MPT", |meta| {
@@ -408,11 +383,6 @@ impl<F: Field> MPTConfig<F> {
                     (MptCellType::Lookup(Table::Keccak), &keccak_table),
                     (MptCellType::Lookup(Table::Fixed), &fixed_table),
                     (MptCellType::Lookup(Table::Exp), &mult_table),
-                    // (MptCellType::MemParentSInput, &parent_s_table),
-                    // (MptCellType::MemParentCInput, &parent_c_table),
-                    // (MptCellType::MemKeySInput, &key_s_table),
-                    // (MptCellType::MemKeyCInput, &key_c_table),
-                    // (MptCellType::MemMainInput, &main_table),
                 ],
             );
             memory.build_lookups(meta);

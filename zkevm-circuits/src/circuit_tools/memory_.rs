@@ -70,7 +70,6 @@ impl<F: Field, C: CellType> Memory<F, C> {
         cb: &mut ConstraintBuilder<F, C>,
         is_first_row: Expression<F>,
     ) {
-        println!("Build memory {:?}", cb.region_id);
         for bank in self.banks.iter() {
             bank.build_constraints(cb, is_first_row.expr());
         }
@@ -217,22 +216,8 @@ impl<F: Field, C: CellType> MemoryBank<F, C> {
             rlc::expr(&values, cb.lookup_challenge.clone().unwrap().expr()),
         );
         let name = format!("{:?} write #{:?}", self.tag, self.writes.1);
-        // cb.add_constraint(
-        //     Box::leak(name.clone().into_boxed_str()), 
-        //     self.query_write().expr() - compressed_expr
-        // );
         cb.store_expression(name.as_str(), compressed_expr.expr(), C::default(), Some(self.query_write()));
-        // let lookup = DynamicData {
-        //     description: Box::leak(name.to_string().into_boxed_str()),
-        //     condition,
-        //     values,
-        //     region_id: cb.region_id,
-        //     is_fixed: true,
-        //     compress: true,
-        // };
-        println!("Store at region {:?} | {:?} \n\t {:?}", cb.region_id, self.tag, condition.identifier());
         self.table_conditions.push((cb.region_id, condition));
-        println!("\t{:?}", self.table_conditions);
         key
     }
 
@@ -276,20 +261,6 @@ impl<F: Field, C: CellType> MemoryBank<F, C> {
         cb: &mut ConstraintBuilder<F, C>,
         is_first_row: Expression<F>,
     ) {
-        // let lookups = self.stored_table
-        //     .iter()
-        //     .filter(|l| l.region_id == cb.region_id)
-        //     .collect::<Vec<_>>();
-        // let condition = lookups
-        //     .iter()
-        //     .fold(0.expr(), |acc, l| acc + l.condition.expr());
-        println!("\t before {:?}", self.table_conditions);
-
-        let condition = self.table_conditions
-            .iter()
-            .filter(|tc| tc.0 == cb.region_id)
-            .collect::<Vec<_>>();
-        println!("\t filtered {:?}", condition);
         let condition = self.table_conditions
         .iter()
         .filter(|tc| tc.0 == cb.region_id)

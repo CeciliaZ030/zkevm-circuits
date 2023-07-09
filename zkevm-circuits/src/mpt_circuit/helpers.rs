@@ -49,16 +49,11 @@ pub enum MptCellType {
     StoragePermutation,
     LookupByte,
     Lookup(Table),
-    MemParentSInput,
-    MemParentSTable,
-    MemParentCInput,
-    MemParentCTable,
-    MemKeySInput,
-    MemKeySTable,
-    MemKeyCInput,
-    MemKeyCTable,
-    MemMainInput,
-    MemMainTable,
+    MemParentS,
+    MemParentC,
+    MemKeyS,
+    MemKeyC,
+    MemMain,
 }
 
 impl Default for MptCellType {
@@ -862,22 +857,22 @@ pub(crate) mod num_nibbles {
 
 pub(crate) fn parent_memory(is_s: bool) -> MptCellType {
     if is_s {
-        MptCellType::MemParentSInput
+        MptCellType::MemParentS
     } else {
-        MptCellType::MemParentCInput
+        MptCellType::MemParentC
     }
 }
 
 pub(crate) fn key_memory(is_s: bool) -> MptCellType {
     if is_s {
-        MptCellType::MemKeySInput
+        MptCellType::MemKeyS
     } else {
-        MptCellType::MemKeyCInput
+        MptCellType::MemKeyC
     }
 }
 
 pub(crate) fn main_memory() -> MptCellType {
-    MptCellType::MemMainInput
+    MptCellType::MemMain
 }
 
 /// MPTConstraintBuilder
