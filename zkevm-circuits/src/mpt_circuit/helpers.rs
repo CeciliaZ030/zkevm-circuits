@@ -8,7 +8,7 @@ use crate::{
             RLCableValue,
         },
         gadgets::{IsEqualGadget, IsZeroGadget, LtGadget},
-        memory_::MemoryBank,
+        memory::MemoryBank,
     },
     evm_circuit::table::Table,
     matchw,

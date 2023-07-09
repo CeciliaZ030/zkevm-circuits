@@ -43,7 +43,7 @@ use crate::{
     circuit_tools::{
         cached_region::CachedRegion,
         cell_manager::{CellManager, DynamicLookupTable},
-        memory_::Memory,
+        memory::Memory,
     },
     evm_circuit::table::Table,
     mpt_circuit::{
