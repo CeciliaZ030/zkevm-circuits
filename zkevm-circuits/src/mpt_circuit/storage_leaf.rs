@@ -54,7 +54,7 @@ impl<F: Field> StorageLeafConfig<F> {
     pub fn configure(
         meta: &mut VirtualCells<'_, F>,
         cb: &mut MPTConstraintBuilder<F>,
-        ctx: MPTContext<F>,
+        ctx: &mut MPTContext<F>,
     ) -> Self {
         cb.base
             .cell_manager
@@ -89,7 +89,7 @@ impl<F: Field> StorageLeafConfig<F> {
                 ctx.rlp_item(meta, cb, StorageRowType::Wrong as usize, RlpItemType::Key);
 
             config.main_data =
-                MainData::load("main storage", cb, &ctx.memory[main_memory()], 0.expr());
+                MainData::load("main storage", cb, &mut ctx.memory[main_memory()], 0.expr());
 
             // Storage leaves always need to be below accounts
             require!(config.main_data.is_below_account => true);
@@ -101,11 +101,15 @@ impl<F: Field> StorageLeafConfig<F> {
             for is_s in [true, false] {
                 // Parent data
                 let parent_data = &mut config.parent_data[is_s.idx()];
-                *parent_data =
-                    ParentData::load("leaf load", cb, &ctx.memory[parent_memory(is_s)], 0.expr());
+                *parent_data = ParentData::load(
+                    "leaf load",
+                    cb,
+                    &mut ctx.memory[parent_memory(is_s)],
+                    0.expr(),
+                );
                 // Key data
                 let key_data = &mut config.key_data[is_s.idx()];
-                *key_data = KeyData::load(cb, &ctx.memory[key_memory(is_s)], 0.expr());
+                *key_data = KeyData::load(cb, &mut ctx.memory[key_memory(is_s)], 0.expr());
 
                 // Placeholder leaf checks
                 config.is_placeholder_leaf[is_s.idx()] =
@@ -185,11 +189,11 @@ impl<F: Field> StorageLeafConfig<F> {
                 }}
 
                 // Key done, set the default values
-                KeyData::store_defaults(cb, &ctx.memory[key_memory(is_s)]);
+                KeyData::store_defaults(cb, &mut ctx.memory[key_memory(is_s)]);
                 // Store the new parent
                 ParentData::store(
                     cb,
-                    &ctx.memory[parent_memory(is_s)],
+                    &mut ctx.memory[parent_memory(is_s)],
                     0.expr(),
                     true.expr(),
                     false.expr(),
@@ -302,7 +306,7 @@ impl<F: Field> StorageLeafConfig<F> {
 
         let main_data =
             self.main_data
-                .witness_load(region, offset, &pv.memory[main_memory()], 0)?;
+                .witness_load(region, offset, &mut pv.memory[main_memory()], 0)?;
 
         let mut key_data = vec![KeyDataWitness::default(); 2];
         let mut parent_data = vec![ParentDataWitness::default(); 2];
@@ -312,7 +316,7 @@ impl<F: Field> StorageLeafConfig<F> {
             parent_data[is_s.idx()] = self.parent_data[is_s.idx()].witness_load(
                 region,
                 offset,
-                &pv.memory[parent_memory(is_s)],
+                &mut pv.memory[parent_memory(is_s)],
                 0,
             )?;
 
@@ -333,7 +337,7 @@ impl<F: Field> StorageLeafConfig<F> {
             key_data[is_s.idx()] = self.key_data[is_s.idx()].witness_load(
                 region,
                 offset,
-                &pv.memory[key_memory(is_s)],
+                &mut pv.memory[key_memory(is_s)],
                 0,
             )?;
             KeyData::witness_store(
