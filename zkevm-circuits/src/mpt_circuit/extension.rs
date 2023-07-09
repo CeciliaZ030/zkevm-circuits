@@ -49,7 +49,7 @@ impl<F: Field> ExtensionGadget<F> {
     pub fn configure(
         meta: &mut VirtualCells<'_, F>,
         cb: &mut MPTConstraintBuilder<F>,
-        ctx: MPTContext<F>,
+        mut ctx: MPTContext<F>,
         key_data: &KeyData<F>,
         parent_data: &[ParentData<F>; 2],
         is_placeholder: &[Cell<F>; 2],

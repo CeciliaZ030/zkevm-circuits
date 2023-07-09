@@ -212,7 +212,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
             Some(condition) => condition * constraint,
             None => constraint,
         };
-        let constraint = self.split_expression(name, constraint);
+        let constraint = self.split_expression(name, constraint, None);
         self.validate_degree(constraint.degree(), name);
         self.constraints.push((name, constraint));
     }
@@ -398,6 +398,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
                 *v = self.split_expression(
                     Box::leak(format!("compression value - {:?}", tag).into_boxed_str()),
                     v.clone(),
+                    None
                 )
             });
             // values = vec![self.store_expression(description, values[0].expr(), tag)];
@@ -438,6 +439,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
                 *v = self.split_expression(
                     Box::leak(format!("compression value - {:?}", tag).into_boxed_str()),
                     v.clone(),
+                    None
                 )
             });
         }
@@ -470,8 +472,9 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         let compressed_expr = self.split_expression(
             "compression",
             rlc::expr(&values, self.lookup_challenge.clone().unwrap().expr()),
+            None
         );
-        self.store_expression(description, compressed_expr, cell_type);
+        self.store_expression(description, compressed_expr, cell_type, None);
 
         let lookup = DynamicData {
             description: Box::leak(description.to_string().into_boxed_str()),
@@ -543,6 +546,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         name: &str,
         expr: Expression<F>,
         cell_type: C,
+        target_cell: Option<Cell<F>>,
     ) -> Expression<F> {
         // Check if we already stored the expression somewhere
         let stored_expression = self.find_stored_expression(&expr, cell_type);
@@ -550,7 +554,11 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
             Some(stored_expression) => stored_expression.cell.expr(),
             None => {
                 // Require the stored value to equal the value of the expression
-                let cell = self.query_one(cell_type);
+                let cell = if let Some(tc) = target_cell {
+                    tc
+                } else {
+                    self.query_one(cell_type)
+                };
                 let name = format!("{} (stored expression)", name);
                 self.constraints.push((
                     Box::leak(name.clone().into_boxed_str()),
@@ -586,18 +594,18 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         }
     }
 
-    fn split_expression(&mut self, name: &'static str, expr: Expression<F>) -> Expression<F> {
+    pub(crate) fn split_expression(&mut self, name: &'static str, expr: Expression<F>, target_cell: Option<Cell<F>>) -> Expression<F> {
         if expr.degree() > self.max_degree && self.region_id != 0 {
             match expr {
                 Expression::Negated(poly) => {
-                    Expression::Negated(Box::new(self.split_expression(name, *poly)))
+                    Expression::Negated(Box::new(self.split_expression(name, *poly, target_cell)))
                 }
                 Expression::Scaled(poly, v) => {
-                    Expression::Scaled(Box::new(self.split_expression(name, *poly)), v)
+                    Expression::Scaled(Box::new(self.split_expression(name, *poly, target_cell)), v)
                 }
                 Expression::Sum(a, b) => {
-                    let a = self.split_expression(name, *a);
-                    let b = self.split_expression(name, *b);
+                    let a = self.split_expression(name, *a, target_cell.clone());
+                    let b = self.split_expression(name, *b, target_cell);
                     a + b
                 }
                 Expression::Product(a, b) => {
@@ -605,10 +613,10 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
                     while a.degree() + b.degree() > self.max_degree {
                         let mut split = |expr: Expression<F>| {
                             if expr.degree() > self.max_degree {
-                                self.split_expression(name, expr)
+                                self.split_expression(name, expr, target_cell.clone())
                             } else {
                                 let cell_type = C::storage_for_expr(&expr);
-                                self.store_expression(name, expr, cell_type)
+                                self.store_expression(name, expr, cell_type, target_cell.clone())
                             }
                         };
                         if a.degree() >= b.degree() {

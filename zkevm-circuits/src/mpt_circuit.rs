@@ -43,7 +43,7 @@ use crate::{
     circuit_tools::{
         cached_region::CachedRegion,
         cell_manager::{CellManager, DynamicLookupTable},
-        memory::Memory,
+        memory_::Memory,
     },
     evm_circuit::table::Table,
     mpt_circuit::{
@@ -246,17 +246,30 @@ impl<F: Field> MPTConfig<F> {
             .try_into()
             .unwrap();
 
-        let memory_columns = (0..5).map(|_| meta.advice_column()).collect::<Vec<_>>();
 
         let mut state_machine = StateMachineConfig::construct(meta);
         let mut rlp_item = MainRLPGadget::default();
 
-        let mut memory = Memory::new(memory_columns);
-        memory.allocate(meta, key_memory(false), MptCellType::MemKeyCTable);
-        memory.allocate(meta, key_memory(true), MptCellType::MemKeySTable);
-        memory.allocate(meta, parent_memory(false), MptCellType::MemParentCTable);
-        memory.allocate(meta, parent_memory(true), MptCellType::MemParentSTable);
-        memory.allocate(meta, main_memory(), MptCellType::MemMainTable);
+        // let memory_columns = (0..5).map(|_| meta.advice_column()).collect::<Vec<_>>();
+        // let mut memory = Memory::new(memory_columns);
+        // memory.allocate(meta, key_memory(false), MptCellType::MemKeyCTable);
+        // memory.allocate(meta, key_memory(true), MptCellType::MemKeySTable);
+        // memory.allocate(meta, parent_memory(false), MptCellType::MemParentCTable);
+        // memory.allocate(meta, parent_memory(true), MptCellType::MemParentSTable);
+        // memory.allocate(meta, main_memory(), MptCellType::MemMainTable);
+        let memory = Memory::new(
+            meta,
+            vec![
+                (MptCellType::MemKeyCTable, 1),
+                (MptCellType::MemKeySTable, 1),
+                (MptCellType::MemParentCTable, 1),
+                (MptCellType::MemParentSTable, 1),
+                (MptCellType::MemMainTable, 1)
+            ],
+            0,
+            50,
+        );
+
 
         let mut ctx = MPTContext {
             mpt_table,
