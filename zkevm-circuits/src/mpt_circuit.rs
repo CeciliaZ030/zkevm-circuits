@@ -29,7 +29,7 @@ pub mod witness_row;
 
 use self::{
     account_leaf::AccountLeafConfig,
-    helpers::{key_memory, RLPItemView},
+    helpers::RLPItemView,
     param::RLP_UNIT_NUM_BYTES,
     rlp_gadgets::decode_rlp,
     witness_row::{
@@ -40,17 +40,10 @@ use self::{
 };
 use crate::{
     assign, assignf, circuit,
-    circuit_tools::{
-        cached_region::CachedRegion,
-        cell_manager::{CellManager, DynamicLookupTable},
-        memory::Memory,
-    },
+    circuit_tools::{cached_region::CachedRegion, cell_manager::CellManager, memory::Memory},
     evm_circuit::table::Table,
     mpt_circuit::{
-        helpers::{
-            main_memory, parent_memory, MPTConstraintBuilder, MainRLPGadget, MptCellType, FIXED,
-            KECCAK, MULT,
-        },
+        helpers::{MPTConstraintBuilder, MainRLPGadget, MptCellType, FIXED, KECCAK, MULT},
         start::StartConfig,
         storage_leaf::StorageLeafConfig,
     },
@@ -246,7 +239,6 @@ impl<F: Field> MPTConfig<F> {
             .try_into()
             .unwrap();
 
-
         let mut state_machine = StateMachineConfig::construct(meta);
         let mut rlp_item = MainRLPGadget::default();
         let memory = Memory::new(
@@ -256,12 +248,11 @@ impl<F: Field> MPTConfig<F> {
                 (MptCellType::MemKeyS, 3),
                 (MptCellType::MemParentC, 3),
                 (MptCellType::MemParentS, 3),
-                (MptCellType::MemMain, 3)
+                (MptCellType::MemMain, 3),
             ],
             0,
             50,
         );
-
 
         let mut ctx = MPTContext {
             mpt_table,

@@ -101,8 +101,12 @@ impl<F: Field> StorageLeafConfig<F> {
             for is_s in [true, false] {
                 // Parent data
                 let parent_data = &mut config.parent_data[is_s.idx()];
-                *parent_data =
-                    ParentData::load("leaf load", cb, &mut ctx.memory[parent_memory(is_s)], 0.expr());
+                *parent_data = ParentData::load(
+                    "leaf load",
+                    cb,
+                    &mut ctx.memory[parent_memory(is_s)],
+                    0.expr(),
+                );
                 // Key data
                 let key_data = &mut config.key_data[is_s.idx()];
                 *key_data = KeyData::load(cb, &mut ctx.memory[key_memory(is_s)], 0.expr());

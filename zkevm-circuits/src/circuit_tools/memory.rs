@@ -1,29 +1,45 @@
 //! Memory
-use crate::{util::{query_expression, Expr}, evm_circuit::util::rlc};
-use eth_types::{Field, Hash};
+use crate::{
+    evm_circuit::util::rlc,
+    util::{query_expression, Expr},
+};
+use eth_types::Field;
 use halo2_proofs::{
     circuit::Value,
-    plonk::{Advice, Column, ConstraintSystem, Error, Expression, Phase, FirstPhase, SecondPhase, ThirdPhase},
+    plonk::{
+        Advice, Column, ConstraintSystem, Error, Expression, FirstPhase, SecondPhase, ThirdPhase,
+    },
     poly::Rotation,
 };
 use itertools::Itertools;
-use std::{ops::{Index, IndexMut}, collections::HashMap};
+use std::{
+    collections::HashMap,
+    ops::{Index, IndexMut},
+};
 
 use super::{
-    cached_region::CachedRegion, cell_manager::{CellType, Cell}, constraint_builder::{ConstraintBuilder, DynamicData},
+    cached_region::CachedRegion,
+    cell_manager::{Cell, CellType},
+    constraint_builder::ConstraintBuilder,
 };
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Memory<F, C> {
     height: usize,
     banks: Vec<MemoryBank<F, C>>,
-    rw_records: HashMap<C, (Column<Advice>, Column<Advice>)>
+    rw_records: HashMap<C, (Column<Advice>, Column<Advice>)>,
 }
 
 impl<F: Field, C: CellType> Memory<F, C> {
-    pub(crate) fn new(meta: &mut ConstraintSystem<F>, tags: Vec<(C, usize)>, offset: usize, height: usize) -> Self {
+    pub(crate) fn new(
+        meta: &mut ConstraintSystem<F>,
+        tags: Vec<(C, usize)>,
+        offset: usize,
+        height: usize,
+    ) -> Self {
         let mut rw_records = HashMap::new();
-        let banks = tags.iter()
+        let banks = tags
+            .iter()
             .map(|(tag, phase)| {
                 let [key, reads, writes] = match phase {
                     1 => [(); 3].map(|_| meta.advice_column_in(FirstPhase)),
@@ -41,7 +57,6 @@ impl<F: Field, C: CellType> Memory<F, C> {
             rw_records,
         }
     }
-
 
     pub(crate) fn get_bank(&self, tag: C) -> &MemoryBank<F, C> {
         for bank in self.banks.iter() {
@@ -75,12 +90,12 @@ impl<F: Field, C: CellType> Memory<F, C> {
         }
     }
 
-    pub(crate) fn build_lookups(&self, meta: &mut ConstraintSystem<F>,) {
+    pub(crate) fn build_lookups(&self, meta: &mut ConstraintSystem<F>) {
         for (cell_type, (reads, writes)) in &self.rw_records {
             let name = format!("{:?}", cell_type);
             meta.lookup_any(Box::leak(name.into_boxed_str()), |meta| {
                 vec![(
-                    meta.query_advice(*reads, Rotation(0)), 
+                    meta.query_advice(*reads, Rotation(0)),
                     meta.query_advice(*writes, Rotation(0)),
                 )]
             });
@@ -199,7 +214,6 @@ impl<F: Field, C: CellType> MemoryBank<F, C> {
         cell
     }
 
-
     pub(crate) fn store(
         &mut self,
         cb: &mut ConstraintBuilder<F, C>,
@@ -207,7 +221,8 @@ impl<F: Field, C: CellType> MemoryBank<F, C> {
     ) -> Expression<F> {
         let key = self.key() + 1.expr();
         let condition = cb.get_condition_expr();
-        let values = self.prepend_key(key.clone(), values)
+        let values = self
+            .prepend_key(key.clone(), values)
             .iter()
             .map(|value| condition.expr() * value.expr())
             .collect_vec();
@@ -216,21 +231,27 @@ impl<F: Field, C: CellType> MemoryBank<F, C> {
             rlc::expr(&values, cb.lookup_challenge.clone().unwrap().expr()),
         );
         let name = format!("{:?} write #{:?}", self.tag, self.writes.1);
-        cb.store_expression(name.as_str(), compressed_expr.expr(), C::default(), Some(self.query_write()));
+        cb.store_expression(
+            name.as_str(),
+            compressed_expr.expr(),
+            C::default(),
+            Some(self.query_write()),
+        );
         self.table_conditions.push((cb.region_id, condition));
         key
     }
 
     pub(crate) fn load(
         &mut self,
-        description: &'static str,
+        _description: &'static str,
         cb: &mut ConstraintBuilder<F, C>,
         load_offset: Expression<F>,
         values: &[Expression<F>],
     ) {
         let key = self.key() - load_offset;
         let condition = cb.get_condition_expr();
-        let values = self.prepend_key(key, values)
+        let values = self
+            .prepend_key(key, values)
             .iter()
             .map(|value| condition.expr() * value.expr())
             .collect_vec();
@@ -239,8 +260,12 @@ impl<F: Field, C: CellType> MemoryBank<F, C> {
             rlc::expr(&values, cb.lookup_challenge.clone().unwrap().expr()),
         );
         let name = format!("{:?} write #{:?}", self.tag, self.writes.1);
-        cb.store_expression(name.as_str(), compressed_expr.expr(), C::default(), Some(self.query_read()));
-
+        cb.store_expression(
+            name.as_str(),
+            compressed_expr.expr(),
+            C::default(),
+            Some(self.query_read()),
+        );
     }
 
     pub(crate) fn witness_store(&mut self, offset: usize, values: &[F]) {
@@ -261,12 +286,11 @@ impl<F: Field, C: CellType> MemoryBank<F, C> {
         cb: &mut ConstraintBuilder<F, C>,
         is_first_row: Expression<F>,
     ) {
-        let condition = self.table_conditions
-        .iter()
-        .filter(|tc| tc.0 == cb.region_id)
-        .fold(0.expr(), |acc, tc|{
-            acc + tc.1.expr()
-        });
+        let condition = self
+            .table_conditions
+            .iter()
+            .filter(|tc| tc.0 == cb.region_id)
+            .fold(0.expr(), |acc, tc| acc + tc.1.expr());
         crate::circuit!([meta, cb], {
             ifx! {is_first_row => {
                 require!(self.cur.expr() => 0);

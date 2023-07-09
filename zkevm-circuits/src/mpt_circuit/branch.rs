@@ -50,7 +50,7 @@ impl<F: Field> BranchGadget<F> {
     pub fn configure(
         meta: &mut VirtualCells<'_, F>,
         cb: &mut MPTConstraintBuilder<F>,
-        mut ctx: MPTContext<F>,
+        ctx: MPTContext<F>,
         is_placeholder: &[Cell<F>; 2],
         parent_rlc: &[Expression<F>; 2],
         is_root: &[Expression<F>; 2],
