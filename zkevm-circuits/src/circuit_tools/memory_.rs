@@ -294,7 +294,6 @@ impl<F: Field, C: CellType> MemoryBank<F, C> {
         .iter()
         .filter(|tc| tc.0 == cb.region_id)
         .fold(0.expr(), |acc, tc|{
-            print!("\t{:?} - {:?}", tc.0, tc.1);
             acc + tc.1.expr()
         });
         crate::circuit!([meta, cb], {
@@ -303,15 +302,13 @@ impl<F: Field, C: CellType> MemoryBank<F, C> {
             }}
             let description = format!("Dynamic lookup table {:?}", self.tag());
             require!(condition => bool);
-            // require!(description, self.next => self.cur.expr() + condition.expr());
+            require!(description, self.next => self.cur.expr() + condition.expr());
             // TODO(Brecht): add constraint that makes sure the table value remains the same when
             // not written
-            // ifx!(not!(condition) => {
-            //     // Allign the allocation of cell data with key
-            //     // meaning if not written then current cell should be same as last
-            //     // TODO(Cecilia): fix assignment
-            //     require!(peek(&self.writes, 0) => peek(&self.writes, 1));
-            // });
+            ifx!(not!(is_first_row) * not!(condition) => {
+                // TODO(Cecilia): Only works with Halo2 query API update
+                // require!(self.writes.0[0].column().expr() => self.writes.0[0].column().prev());
+            });
         });
     }
 
@@ -347,8 +344,4 @@ impl<F: Field, C: CellType> MemoryBank<F, C> {
     pub(crate) fn prepend_key<V: Clone>(&self, key: V, values: &[V]) -> Vec<V> {
         [vec![key], values.to_owned()].concat().to_vec()
     }
-}
-
-fn peek<F: Field>(rw_stack: &(Vec<Cell<F>>, usize), offset: usize) -> Expression<F> {
-    rw_stack.0[rw_stack.1 -1 - offset].expr()
 }
