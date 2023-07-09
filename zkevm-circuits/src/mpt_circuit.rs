@@ -317,11 +317,11 @@ impl<F: Field> MPTConfig<F> {
             50,
         );
 
-        let parent_s_table = DynamicLookupTable::from(&state_cm, MptCellType::MemParentSTable);
-        let parent_c_table = DynamicLookupTable::from(&state_cm, MptCellType::MemParentCTable);
-        let key_s_table = DynamicLookupTable::from(&state_cm, MptCellType::MemKeySTable);
-        let key_c_table = DynamicLookupTable::from(&state_cm, MptCellType::MemKeyCTable);
-        let main_table = DynamicLookupTable::from(&state_cm, MptCellType::MemMainTable);
+        // let parent_s_table = DynamicLookupTable::from(&state_cm, MptCellType::MemParentSTable);
+        // let parent_c_table = DynamicLookupTable::from(&state_cm, MptCellType::MemParentCTable);
+        // let key_s_table = DynamicLookupTable::from(&state_cm, MptCellType::MemKeySTable);
+        // let key_c_table = DynamicLookupTable::from(&state_cm, MptCellType::MemKeyCTable);
+        // let main_table = DynamicLookupTable::from(&state_cm, MptCellType::MemMainTable);
 
         let r = 123456.expr();
         let mut cb = MPTConstraintBuilder::new(5, Some(challenges.clone()), None, r.expr());
@@ -408,13 +408,14 @@ impl<F: Field> MPTConfig<F> {
                     (MptCellType::Lookup(Table::Keccak), &keccak_table),
                     (MptCellType::Lookup(Table::Fixed), &fixed_table),
                     (MptCellType::Lookup(Table::Exp), &mult_table),
-                    (MptCellType::MemParentSInput, &parent_s_table),
-                    (MptCellType::MemParentCInput, &parent_c_table),
-                    (MptCellType::MemKeySInput, &key_s_table),
-                    (MptCellType::MemKeyCInput, &key_c_table),
-                    (MptCellType::MemMainInput, &main_table),
+                    // (MptCellType::MemParentSInput, &parent_s_table),
+                    // (MptCellType::MemParentCInput, &parent_c_table),
+                    // (MptCellType::MemKeySInput, &key_s_table),
+                    // (MptCellType::MemKeyCInput, &key_c_table),
+                    // (MptCellType::MemMainInput, &main_table),
                 ],
             );
+            memory.build_lookups(meta);
             cb.base.build_dynamic_lookups(
                 meta,
                 &[vec![FIXED]].concat(),

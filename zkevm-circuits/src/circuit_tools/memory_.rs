@@ -76,6 +76,18 @@ impl<F: Field, C: CellType> Memory<F, C> {
         }
     }
 
+    pub(crate) fn build_lookups(&self, meta: &mut ConstraintSystem<F>,) {
+        for (cell_type, (reads, writes)) in &self.rw_records {
+            let name = format!("{:?}", cell_type);
+            meta.lookup_any(Box::leak(name.into_boxed_str()), |meta| {
+                vec![(
+                    meta.query_advice(*reads, Rotation(0)), 
+                    meta.query_advice(*writes, Rotation(0)),
+                )]
+            });
+        }
+    }
+
     pub(crate) fn clear_witness_data(&mut self) {
         for bank in self.banks.iter_mut() {
             bank.clear_witness_data();
