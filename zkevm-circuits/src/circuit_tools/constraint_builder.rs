@@ -212,7 +212,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
             Some(condition) => condition * constraint,
             None => constraint,
         };
-        let constraint = self.split_expression(name, constraint, None);
+        let constraint = self.split_expression(name, constraint);
         self.validate_degree(constraint.degree(), name);
         self.constraints.push((name, constraint));
     }
@@ -398,7 +398,6 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
                 *v = self.split_expression(
                     Box::leak(format!("compression value - {:?}", tag).into_boxed_str()),
                     v.clone(),
-                    None
                 )
             });
             // values = vec![self.store_expression(description, values[0].expr(), tag)];
@@ -439,7 +438,6 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
                 *v = self.split_expression(
                     Box::leak(format!("compression value - {:?}", tag).into_boxed_str()),
                     v.clone(),
-                    None
                 )
             });
         }
@@ -472,7 +470,6 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         let compressed_expr = self.split_expression(
             "compression",
             rlc::expr(&values, self.lookup_challenge.clone().unwrap().expr()),
-            None
         );
         self.store_expression(description, compressed_expr, cell_type, None);
 
@@ -594,18 +591,18 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         }
     }
 
-    pub(crate) fn split_expression(&mut self, name: &'static str, expr: Expression<F>, target_cell: Option<Cell<F>>) -> Expression<F> {
+    pub(crate) fn split_expression(&mut self, name: &'static str, expr: Expression<F>) -> Expression<F> {
         if expr.degree() > self.max_degree && self.region_id != 0 {
             match expr {
                 Expression::Negated(poly) => {
-                    Expression::Negated(Box::new(self.split_expression(name, *poly, target_cell)))
+                    Expression::Negated(Box::new(self.split_expression(name, *poly)))
                 }
                 Expression::Scaled(poly, v) => {
-                    Expression::Scaled(Box::new(self.split_expression(name, *poly, target_cell)), v)
+                    Expression::Scaled(Box::new(self.split_expression(name, *poly)), v)
                 }
                 Expression::Sum(a, b) => {
-                    let a = self.split_expression(name, *a, target_cell.clone());
-                    let b = self.split_expression(name, *b, target_cell);
+                    let a = self.split_expression(name, *a);
+                    let b = self.split_expression(name, *b);
                     a + b
                 }
                 Expression::Product(a, b) => {
@@ -613,10 +610,10 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
                     while a.degree() + b.degree() > self.max_degree {
                         let mut split = |expr: Expression<F>| {
                             if expr.degree() > self.max_degree {
-                                self.split_expression(name, expr, target_cell.clone())
+                                self.split_expression(name, expr)
                             } else {
                                 let cell_type = C::storage_for_expr(&expr);
-                                self.store_expression(name, expr, cell_type, target_cell.clone())
+                                self.store_expression(name, expr, cell_type, None)
                             }
                         };
                         if a.degree() >= b.degree() {

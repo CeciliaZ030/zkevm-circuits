@@ -359,28 +359,28 @@ impl<F: Field> MPTConfig<F> {
                         a!(state_machine.is_start) => {
                             state_machine.step_constraints(meta, &mut cb, StartRowType::Count as usize);
                             cb.base.push_region(MPTRegion::Start as usize);
-                            state_machine.start_config = StartConfig::configure(meta, &mut cb, ctx.clone());
+                            state_machine.start_config = StartConfig::configure(meta, &mut cb, &mut ctx);
                             ctx.memory.build_constraints(&mut cb.base, f!(q_first));
                             cb.base.pop_region();
                         },
                         a!(state_machine.is_branch) => {
                             state_machine.step_constraints(meta, &mut cb, ExtensionBranchRowType::Count as usize);
                             cb.base.push_region(MPTRegion::Branch as usize);
-                            state_machine.branch_config = ExtensionBranchConfig::configure(meta, &mut cb, ctx.clone());
+                            state_machine.branch_config = ExtensionBranchConfig::configure(meta, &mut cb, &mut ctx);
                             ctx.memory.build_constraints(&mut cb.base, f!(q_first));
                             cb.base.pop_region();
                         },
                         a!(state_machine.is_account) => {
                             state_machine.step_constraints(meta, &mut cb, AccountRowType::Count as usize);
                             cb.base.push_region(MPTRegion::Account as usize);
-                            state_machine.account_config = AccountLeafConfig::configure(meta, &mut cb, ctx.clone());
+                            state_machine.account_config = AccountLeafConfig::configure(meta, &mut cb, &mut ctx);
                             ctx.memory.build_constraints(&mut cb.base, f!(q_first));
                             cb.base.pop_region();
                         },
                         a!(state_machine.is_storage) => {
                             state_machine.step_constraints(meta, &mut cb, StorageRowType::Count as usize);
                             cb.base.push_region(MPTRegion::Storage as usize);
-                            state_machine.storage_config = StorageLeafConfig::configure(meta, &mut cb, ctx.clone());
+                            state_machine.storage_config = StorageLeafConfig::configure(meta, &mut cb, &mut ctx);
                             ctx.memory.build_constraints(&mut cb.base, f!(q_first));
                             cb.base.pop_region();
                         },

@@ -54,7 +54,7 @@ impl<F: Field> AccountLeafConfig<F> {
     pub fn configure(
         meta: &mut VirtualCells<'_, F>,
         cb: &mut MPTConstraintBuilder<F>,
-        mut ctx: MPTContext<F>,
+        ctx: &mut MPTContext<F>,
     ) -> Self {
         cb.base
             .cell_manager

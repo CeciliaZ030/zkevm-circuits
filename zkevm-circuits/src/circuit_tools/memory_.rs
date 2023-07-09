@@ -70,6 +70,7 @@ impl<F: Field, C: CellType> Memory<F, C> {
         cb: &mut ConstraintBuilder<F, C>,
         is_first_row: Expression<F>,
     ) {
+        println!("Build memory {:?}", cb.region_id);
         for bank in self.banks.iter() {
             bank.build_constraints(cb, is_first_row.expr());
         }
@@ -214,7 +215,6 @@ impl<F: Field, C: CellType> MemoryBank<F, C> {
         let compressed_expr = cb.split_expression(
             "compression",
             rlc::expr(&values, cb.lookup_challenge.clone().unwrap().expr()),
-            None,
         );
         let name = format!("{:?} write #{:?}", self.tag, self.writes.1);
         // cb.add_constraint(
@@ -230,7 +230,9 @@ impl<F: Field, C: CellType> MemoryBank<F, C> {
         //     is_fixed: true,
         //     compress: true,
         // };
+        println!("Store at region {:?} | {:?} \n\t {:?}", cb.region_id, self.tag, condition.identifier());
         self.table_conditions.push((cb.region_id, condition));
+        println!("\t{:?}", self.table_conditions);
         key
     }
 
@@ -250,7 +252,6 @@ impl<F: Field, C: CellType> MemoryBank<F, C> {
         let compressed_expr = cb.split_expression(
             "compression",
             rlc::expr(&values, cb.lookup_challenge.clone().unwrap().expr()),
-            None
         );
         let name = format!("{:?} write #{:?}", self.tag, self.writes.1);
         cb.store_expression(name.as_str(), compressed_expr.expr(), C::default(), Some(self.query_read()));
@@ -282,10 +283,20 @@ impl<F: Field, C: CellType> MemoryBank<F, C> {
         // let condition = lookups
         //     .iter()
         //     .fold(0.expr(), |acc, l| acc + l.condition.expr());
+        println!("\t before {:?}", self.table_conditions);
+
+        let condition = self.table_conditions
+            .iter()
+            .filter(|tc| tc.0 == cb.region_id)
+            .collect::<Vec<_>>();
+        println!("\t filtered {:?}", condition);
         let condition = self.table_conditions
         .iter()
         .filter(|tc| tc.0 == cb.region_id)
-        .fold(0.expr(), |acc, tc| acc + tc.1.expr());
+        .fold(0.expr(), |acc, tc|{
+            print!("\t{:?} - {:?}", tc.0, tc.1);
+            acc + tc.1.expr()
+        });
         crate::circuit!([meta, cb], {
             ifx! {is_first_row => {
                 require!(self.cur.expr() => 0);
