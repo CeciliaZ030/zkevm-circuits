@@ -1,3 +1,5 @@
+use std::default;
+
 use eth_types::Field;
 use gadgets::util::Scalar;
 use halo2_proofs::{
@@ -39,6 +41,12 @@ impl CellType for RlpCell {
     }
 }
 
+impl Default for RlpCell {
+    fn default() -> Self {
+        RlpCell::PhaseOne
+    }
+}
+
 impl RlpConfig {
     pub fn new<F: Field>(
         meta: &mut ConstraintSystem<F>, 
@@ -65,6 +73,6 @@ impl RlpConfig {
             5,
         );
         let mut cb =  ConstraintBuilder::new(MAX_DEG,  Some(cm), None);
-
+        todo!()
     }
 }

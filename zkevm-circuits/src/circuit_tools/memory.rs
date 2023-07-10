@@ -26,7 +26,7 @@ use super::{
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Memory<F, C> {
     height: usize,
-    banks: Vec<MemoryBank<F, C>>,
+    banks: HashMap<C, MemoryBank<F, C>>,
     rw_records: HashMap<C, (Column<Advice>, Column<Advice>)>,
 }
 
@@ -48,9 +48,9 @@ impl<F: Field, C: CellType> Memory<F, C> {
                     _ => unreachable!(),
                 };
                 rw_records.insert(tag.clone(), (reads, writes));
-                MemoryBank::new(meta, tag.clone(), height, offset, key, reads, writes)
+                (tag.clone(), MemoryBank::new(meta, tag.clone(), height, offset, key, reads, writes))
             })
-            .collect::<Vec<MemoryBank<F, C>>>();
+            .collect::<HashMap<C, MemoryBank<F, C>>>();
         Self {
             banks,
             height,
@@ -59,21 +59,11 @@ impl<F: Field, C: CellType> Memory<F, C> {
     }
 
     pub(crate) fn get_bank(&self, tag: C) -> &MemoryBank<F, C> {
-        for bank in self.banks.iter() {
-            if bank.tag() == tag {
-                return bank;
-            }
-        }
-        unreachable!()
+        self.banks.get(&tag).unwrap()
     }
 
     pub(crate) fn get_mut_bank(&mut self, tag: C) -> &mut MemoryBank<F, C> {
-        for bank in self.banks.iter_mut() {
-            if bank.tag() == tag {
-                return bank;
-            }
-        }
-        unreachable!()
+        self.banks.get_mut(&tag).unwrap()
     }
 
     pub(crate) fn get_records(&self) -> Vec<(Column<Advice>, Column<Advice>)> {
@@ -85,7 +75,7 @@ impl<F: Field, C: CellType> Memory<F, C> {
         cb: &mut ConstraintBuilder<F, C>,
         is_first_row: Expression<F>,
     ) {
-        for bank in self.banks.iter() {
+        for (_, bank) in self.banks.iter() {
             bank.build_constraints(cb, is_first_row.expr());
         }
     }
@@ -103,7 +93,7 @@ impl<F: Field, C: CellType> Memory<F, C> {
     }
 
     pub(crate) fn clear_witness_data(&mut self) {
-        for bank in self.banks.iter_mut() {
+        for (_, bank) in self.banks.iter_mut() {
             bank.clear_witness_data();
         }
     }
@@ -113,14 +103,14 @@ impl<F: Field, C: CellType> Memory<F, C> {
         region: &mut CachedRegion<'_, '_, F>,
         height: usize,
     ) -> Result<(), Error> {
-        for bank in self.banks.iter() {
+        for (_, bank) in self.banks.iter() {
             bank.assign(region, height)?;
         }
         Ok(())
     }
 
     pub(crate) fn tags(&self) -> Vec<C> {
-        self.banks.iter().map(|bank| bank.tag()).collect()
+        self.banks.iter().map(|(_, bank)| bank.tag()).collect()
     }
 }
 
@@ -128,23 +118,13 @@ impl<F: Field, C: CellType> Index<C> for Memory<F, C> {
     type Output = MemoryBank<F, C>;
 
     fn index(&self, tag: C) -> &Self::Output {
-        for bank in self.banks.iter() {
-            if bank.tag() == tag {
-                return bank;
-            }
-        }
-        unreachable!()
+        &self.banks[&tag]
     }
 }
 
 impl<F: Field, C: CellType> IndexMut<C> for Memory<F, C> {
     fn index_mut(&mut self, tag: C) -> &mut Self::Output {
-        for bank in self.banks.iter_mut() {
-            if bank.tag() == tag {
-                return bank;
-            }
-        }
-        unreachable!()
+        self.banks.get_mut(&tag).unwrap()
     }
 }
 

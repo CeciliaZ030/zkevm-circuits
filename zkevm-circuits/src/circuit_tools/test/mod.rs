@@ -25,6 +25,7 @@ use halo2_proofs::{
 mod query_and_branch;
 mod shuffle;
 mod simple_rlp;
+mod database;
 
 /// To Test:
 ///    1. Constrain advices with cells
