@@ -49,16 +49,11 @@ pub enum MptCellType {
     StoragePermutation,
     LookupByte,
     Lookup(Table),
-    MemParentSInput,
-    MemParentSTable,
-    MemParentCInput,
-    MemParentCTable,
-    MemKeySInput,
-    MemKeySTable,
-    MemKeyCInput,
-    MemKeyCTable,
-    MemMainInput,
-    MemMainTable,
+    MemParentS,
+    MemParentC,
+    MemKeyS,
+    MemKeyC,
+    MemMain,
 }
 
 impl Default for MptCellType {
@@ -392,7 +387,7 @@ pub(crate) struct KeyDataWitness<F> {
 impl<F: Field> KeyData<F> {
     pub(crate) fn load(
         cb: &mut MPTConstraintBuilder<F>,
-        memory: &MemoryBank<F, MptCellType>,
+        memory: &mut MemoryBank<F, MptCellType>,
         offset: Expression<F>,
     ) -> Self {
         let key_data = KeyData {
@@ -428,7 +423,7 @@ impl<F: Field> KeyData<F> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn store(
         cb: &mut MPTConstraintBuilder<F>,
-        memory: &MemoryBank<F, MptCellType>,
+        memory: &mut MemoryBank<F, MptCellType>,
         rlc: Expression<F>,
         mult: Expression<F>,
         num_nibbles: Expression<F>,
@@ -455,7 +450,7 @@ impl<F: Field> KeyData<F> {
 
     pub(crate) fn store_defaults(
         cb: &mut MPTConstraintBuilder<F>,
-        memory: &MemoryBank<F, MptCellType>,
+        memory: &mut MemoryBank<F, MptCellType>,
     ) {
         memory.store(&mut cb.base, &KeyData::default_values_expr());
     }
@@ -504,7 +499,7 @@ impl<F: Field> KeyData<F> {
         &self,
         region: &mut CachedRegion<'_, '_, F>,
         offset: usize,
-        memory: &MemoryBank<F, MptCellType>,
+        memory: &mut MemoryBank<F, MptCellType>,
         load_offset: usize,
     ) -> Result<KeyDataWitness<F>, Error> {
         let values = memory.witness_load(load_offset);
@@ -551,7 +546,7 @@ impl<F: Field> ParentData<F> {
     pub(crate) fn load(
         description: &'static str,
         cb: &mut MPTConstraintBuilder<F>,
-        memory: &MemoryBank<F, MptCellType>,
+        memory: &mut MemoryBank<F, MptCellType>,
         offset: Expression<F>,
     ) -> Self {
         let parent_data = ParentData {
@@ -578,7 +573,7 @@ impl<F: Field> ParentData<F> {
 
     pub(crate) fn store(
         cb: &mut MPTConstraintBuilder<F>,
-        memory: &MemoryBank<F, MptCellType>,
+        memory: &mut MemoryBank<F, MptCellType>,
         rlc: Expression<F>,
         is_root: Expression<F>,
         is_placeholder: Expression<F>,
@@ -615,7 +610,7 @@ impl<F: Field> ParentData<F> {
         &self,
         region: &mut CachedRegion<'_, '_, F>,
         offset: usize,
-        memory: &MemoryBank<F, MptCellType>,
+        memory: &mut MemoryBank<F, MptCellType>,
         load_offset: usize,
     ) -> Result<ParentDataWitness<F>, Error> {
         let values = memory.witness_load(load_offset);
@@ -658,7 +653,7 @@ impl<F: Field> MainData<F> {
     pub(crate) fn load(
         description: &'static str,
         cb: &mut MPTConstraintBuilder<F>,
-        memory: &MemoryBank<F, MptCellType>,
+        memory: &mut MemoryBank<F, MptCellType>,
         offset: Expression<F>,
     ) -> Self {
         let main_data = MainData {
@@ -689,7 +684,7 @@ impl<F: Field> MainData<F> {
 
     pub(crate) fn store(
         cb: &mut MPTConstraintBuilder<F>,
-        memory: &MemoryBank<F, MptCellType>,
+        memory: &mut MemoryBank<F, MptCellType>,
         values: [Expression<F>; 6],
     ) {
         memory.store(&mut cb.base, &values);
@@ -724,7 +719,7 @@ impl<F: Field> MainData<F> {
         &self,
         region: &mut CachedRegion<'_, '_, F>,
         offset: usize,
-        memory: &MemoryBank<F, MptCellType>,
+        memory: &mut MemoryBank<F, MptCellType>,
         load_offset: usize,
     ) -> Result<MainDataWitness<F>, Error> {
         let values = memory.witness_load(load_offset);
@@ -862,22 +857,22 @@ pub(crate) mod num_nibbles {
 
 pub(crate) fn parent_memory(is_s: bool) -> MptCellType {
     if is_s {
-        MptCellType::MemParentSInput
+        MptCellType::MemParentS
     } else {
-        MptCellType::MemParentCInput
+        MptCellType::MemParentC
     }
 }
 
 pub(crate) fn key_memory(is_s: bool) -> MptCellType {
     if is_s {
-        MptCellType::MemKeySInput
+        MptCellType::MemKeyS
     } else {
-        MptCellType::MemKeyCInput
+        MptCellType::MemKeyC
     }
 }
 
 pub(crate) fn main_memory() -> MptCellType {
-    MptCellType::MemMainInput
+    MptCellType::MemMain
 }
 
 /// MPTConstraintBuilder

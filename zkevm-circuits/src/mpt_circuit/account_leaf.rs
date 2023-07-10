@@ -54,7 +54,7 @@ impl<F: Field> AccountLeafConfig<F> {
     pub fn configure(
         meta: &mut VirtualCells<'_, F>,
         cb: &mut MPTConstraintBuilder<F>,
-        ctx: MPTContext<F>,
+        ctx: &mut MPTContext<F>,
     ) -> Self {
         cb.base
             .cell_manager
@@ -132,7 +132,7 @@ impl<F: Field> AccountLeafConfig<F> {
                 ctx.rlp_item(meta, cb, AccountRowType::Wrong as usize, RlpItemType::Key);
 
             config.main_data =
-                MainData::load("main storage", cb, &ctx.memory[main_memory()], 0.expr());
+                MainData::load("main storage", cb, &mut ctx.memory[main_memory()], 0.expr());
 
             // Don't allow an account node to follow an account node
             require!(config.main_data.is_below_account => false);
@@ -148,14 +148,14 @@ impl<F: Field> AccountLeafConfig<F> {
             for is_s in [true, false] {
                 // Key data
                 let key_data = &mut config.key_data[is_s.idx()];
-                *key_data = KeyData::load(cb, &ctx.memory[key_memory(is_s)], 0.expr());
+                *key_data = KeyData::load(cb, &mut ctx.memory[key_memory(is_s)], 0.expr());
 
                 // Parent data
                 let parent_data = &mut config.parent_data[is_s.idx()];
                 *parent_data = ParentData::load(
                     "account load",
                     cb,
-                    &ctx.memory[parent_memory(is_s)],
+                    &mut ctx.memory[parent_memory(is_s)],
                     0.expr(),
                 );
 
@@ -238,11 +238,11 @@ impl<F: Field> AccountLeafConfig<F> {
                 require!(config.rlp_key[is_s.idx()].rlp_list.len() => config.rlp_key[is_s.idx()].key_value.num_bytes() + value_list_num_bytes[is_s.idx()].expr());
 
                 // Key done, set the starting values
-                KeyData::store_defaults(cb, &ctx.memory[key_memory(is_s)]);
+                KeyData::store_defaults(cb, &mut ctx.memory[key_memory(is_s)]);
                 // Store the new parent
                 ParentData::store(
                     cb,
-                    &ctx.memory[parent_memory(is_s)],
+                    &mut ctx.memory[parent_memory(is_s)],
                     storage_rlc[is_s.idx()].expr(),
                     true.expr(),
                     false.expr(),
@@ -313,7 +313,7 @@ impl<F: Field> AccountLeafConfig<F> {
             // storage leaves unless it's also a non-existing proof?
             MainData::store(
                 cb,
-                &ctx.memory[main_memory()],
+                &mut ctx.memory[main_memory()],
                 [
                     config.main_data.proof_type.expr(),
                     true.expr(),
@@ -435,7 +435,7 @@ impl<F: Field> AccountLeafConfig<F> {
 
         let main_data =
             self.main_data
-                .witness_load(region, offset, &pv.memory[main_memory()], 0)?;
+                .witness_load(region, offset, &mut pv.memory[main_memory()], 0)?;
 
         // Key
         let mut key_rlc = vec![0.scalar(); 2];
@@ -463,14 +463,14 @@ impl<F: Field> AccountLeafConfig<F> {
             key_data[is_s.idx()] = self.key_data[is_s.idx()].witness_load(
                 region,
                 offset,
-                &pv.memory[key_memory(is_s)],
+                &mut pv.memory[key_memory(is_s)],
                 0,
             )?;
 
             parent_data[is_s.idx()] = self.parent_data[is_s.idx()].witness_load(
                 region,
                 offset,
-                &pv.memory[parent_memory(is_s)],
+                &mut pv.memory[parent_memory(is_s)],
                 0,
             )?;
 

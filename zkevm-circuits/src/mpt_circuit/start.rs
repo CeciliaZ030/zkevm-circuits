@@ -27,7 +27,7 @@ impl<F: Field> StartConfig<F> {
     pub fn configure(
         meta: &mut VirtualCells<'_, F>,
         cb: &mut MPTConstraintBuilder<F>,
-        ctx: MPTContext<F>,
+        ctx: &mut MPTContext<F>,
     ) -> Self {
         cb.base
             .cell_manager
@@ -51,7 +51,7 @@ impl<F: Field> StartConfig<F> {
 
             MainData::store(
                 cb,
-                &ctx.memory[main_memory()],
+                &mut ctx.memory[main_memory()],
                 [
                     config.proof_type.expr(),
                     false.expr(),
@@ -65,13 +65,13 @@ impl<F: Field> StartConfig<F> {
             for is_s in [true, false] {
                 ParentData::store(
                     cb,
-                    &ctx.memory[parent_memory(is_s)],
+                    &mut ctx.memory[parent_memory(is_s)],
                     root[is_s.idx()].expr(),
                     true.expr(),
                     false.expr(),
                     root[is_s.idx()].expr(),
                 );
-                KeyData::store_defaults(cb, &ctx.memory[key_memory(is_s)]);
+                KeyData::store_defaults(cb, &mut ctx.memory[key_memory(is_s)]);
             }
         });
 
