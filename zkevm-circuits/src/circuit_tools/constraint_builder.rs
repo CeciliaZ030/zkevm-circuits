@@ -480,7 +480,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
             "compression",
             rlc::expr(&values, self.lookup_challenge.clone().unwrap().expr()),
         );
-        self.store_expression(description, compressed_expr, cell_type);
+        self.store_expression(description, compressed_expr, cell_type, None);
 
         let lookup = DynamicData {
             description: Box::leak(description.to_string().into_boxed_str()),
@@ -552,6 +552,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         name: &str,
         expr: Expression<F>,
         cell_type: C,
+        target_cell: Option<Cell<F>>,
     ) -> Expression<F> {
         // Check if we already stored the expression somewhere
         let stored_expression = self.find_stored_expression(&expr, cell_type);
@@ -559,7 +560,11 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
             Some(stored_expression) => stored_expression.cell.expr(),
             None => {
                 // Require the stored value to equal the value of the expression
-                let cell = self.query_one(cell_type);
+                let cell = if let Some(tc) = target_cell {
+                    tc
+                } else {
+                    self.query_one(cell_type)
+                };
                 let name = format!("{} (stored expression)", name);
                 self.constraints.push((
                     Box::leak(name.clone().into_boxed_str()),
@@ -595,7 +600,11 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         }
     }
 
-    fn split_expression(&mut self, name: &'static str, expr: Expression<F>) -> Expression<F> {
+    pub(crate) fn split_expression(
+        &mut self,
+        name: &'static str,
+        expr: Expression<F>,
+    ) -> Expression<F> {
         if expr.degree() > self.max_degree && self.region_id != 0 {
             match expr {
                 Expression::Negated(poly) => {
@@ -617,7 +626,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
                                 self.split_expression(name, expr)
                             } else {
                                 let cell_type = C::storage_for_expr(&expr);
-                                self.store_expression(name, expr, cell_type)
+                                self.store_expression(name, expr, cell_type, None)
                             }
                         };
                         if a.degree() >= b.degree() {

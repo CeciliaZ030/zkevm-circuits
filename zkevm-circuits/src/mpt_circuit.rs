@@ -29,7 +29,7 @@ pub mod witness_row;
 
 use self::{
     account_leaf::AccountLeafConfig,
-    helpers::{key_memory, RLPItemView},
+    helpers::RLPItemView,
     param::RLP_UNIT_NUM_BYTES,
     rlp_gadgets::decode_rlp,
     witness_row::{
@@ -40,17 +40,10 @@ use self::{
 };
 use crate::{
     assign, assignf, circuit,
-    circuit_tools::{
-        cached_region::CachedRegion,
-        cell_manager::{CellManager, DynamicLookupTable},
-        memory::Memory,
-    },
+    circuit_tools::{cached_region::CachedRegion, cell_manager::CellManager, memory::Memory},
     evm_circuit::table::Table,
     mpt_circuit::{
-        helpers::{
-            main_memory, parent_memory, MPTConstraintBuilder, MainRLPGadget, MptCellType, FIXED,
-            KECCAK, MULT,
-        },
+        helpers::{MPTConstraintBuilder, MainRLPGadget, MptCellType, FIXED, KECCAK, MULT},
         start::StartConfig,
         storage_leaf::StorageLeafConfig,
     },
@@ -246,17 +239,20 @@ impl<F: Field> MPTConfig<F> {
             .try_into()
             .unwrap();
 
-        let memory_columns = (0..5).map(|_| meta.advice_column()).collect::<Vec<_>>();
-
         let mut state_machine = StateMachineConfig::construct(meta);
         let mut rlp_item = MainRLPGadget::default();
-
-        let mut memory = Memory::new(memory_columns);
-        memory.allocate(meta, key_memory(false), MptCellType::MemKeyCTable);
-        memory.allocate(meta, key_memory(true), MptCellType::MemKeySTable);
-        memory.allocate(meta, parent_memory(false), MptCellType::MemParentCTable);
-        memory.allocate(meta, parent_memory(true), MptCellType::MemParentSTable);
-        memory.allocate(meta, main_memory(), MptCellType::MemMainTable);
+        let memory = Memory::new(
+            meta,
+            vec![
+                (MptCellType::MemKeyC, 3),
+                (MptCellType::MemKeyS, 3),
+                (MptCellType::MemParentC, 3),
+                (MptCellType::MemParentS, 3),
+                (MptCellType::MemMain, 3),
+            ],
+            0,
+            50,
+        );
 
         let mut ctx = MPTContext {
             mpt_table,
@@ -289,27 +285,10 @@ impl<F: Field> MPTConfig<F> {
                 (MptCellType::Lookup(Table::Fixed), 3, 3, false),
                 (MptCellType::Lookup(Table::Keccak), 1, 3, false),
                 (MptCellType::Lookup(Table::Exp), 2, 3, false),
-                (MptCellType::MemParentSInput, 1, 3, false),
-                (MptCellType::MemParentSTable, 1, 3, false),
-                (MptCellType::MemParentCInput, 1, 3, false),
-                (MptCellType::MemParentCTable, 1, 3, false),
-                (MptCellType::MemKeySInput, 1, 3, false),
-                (MptCellType::MemKeySTable, 1, 3, false),
-                (MptCellType::MemKeyCInput, 1, 3, false),
-                (MptCellType::MemKeyCTable, 1, 3, false),
-                (MptCellType::MemMainInput, 1, 3, false),
-                (MptCellType::MemMainTable, 1, 3, false),
             ],
             0,
             50,
         );
-
-        let parent_s_table = DynamicLookupTable::from(&state_cm, MptCellType::MemParentSTable);
-        let parent_c_table = DynamicLookupTable::from(&state_cm, MptCellType::MemParentCTable);
-        let key_s_table = DynamicLookupTable::from(&state_cm, MptCellType::MemKeySTable);
-        let key_c_table = DynamicLookupTable::from(&state_cm, MptCellType::MemKeyCTable);
-        let main_table = DynamicLookupTable::from(&state_cm, MptCellType::MemMainTable);
-
         let r = 123456.expr();
         let mut cb = MPTConstraintBuilder::new(5, Some(challenges.clone()), None, r.expr());
         meta.create_gate("MPT", |meta| {
@@ -346,28 +325,28 @@ impl<F: Field> MPTConfig<F> {
                         a!(state_machine.is_start) => {
                             state_machine.step_constraints(meta, &mut cb, StartRowType::Count as usize);
                             cb.base.push_region(MPTRegion::Start as usize);
-                            state_machine.start_config = StartConfig::configure(meta, &mut cb, ctx.clone());
+                            state_machine.start_config = StartConfig::configure(meta, &mut cb, &mut ctx);
                             ctx.memory.build_constraints(&mut cb.base, f!(q_first));
                             cb.base.pop_region();
                         },
                         a!(state_machine.is_branch) => {
                             state_machine.step_constraints(meta, &mut cb, ExtensionBranchRowType::Count as usize);
                             cb.base.push_region(MPTRegion::Branch as usize);
-                            state_machine.branch_config = ExtensionBranchConfig::configure(meta, &mut cb, ctx.clone());
+                            state_machine.branch_config = ExtensionBranchConfig::configure(meta, &mut cb, &mut ctx);
                             ctx.memory.build_constraints(&mut cb.base, f!(q_first));
                             cb.base.pop_region();
                         },
                         a!(state_machine.is_account) => {
                             state_machine.step_constraints(meta, &mut cb, AccountRowType::Count as usize);
                             cb.base.push_region(MPTRegion::Account as usize);
-                            state_machine.account_config = AccountLeafConfig::configure(meta, &mut cb, ctx.clone());
+                            state_machine.account_config = AccountLeafConfig::configure(meta, &mut cb, &mut ctx);
                             ctx.memory.build_constraints(&mut cb.base, f!(q_first));
                             cb.base.pop_region();
                         },
                         a!(state_machine.is_storage) => {
                             state_machine.step_constraints(meta, &mut cb, StorageRowType::Count as usize);
                             cb.base.push_region(MPTRegion::Storage as usize);
-                            state_machine.storage_config = StorageLeafConfig::configure(meta, &mut cb, ctx.clone());
+                            state_machine.storage_config = StorageLeafConfig::configure(meta, &mut cb, &mut ctx);
                             ctx.memory.build_constraints(&mut cb.base, f!(q_first));
                             cb.base.pop_region();
                         },
@@ -395,13 +374,9 @@ impl<F: Field> MPTConfig<F> {
                     (MptCellType::Lookup(Table::Keccak), &keccak_table),
                     (MptCellType::Lookup(Table::Fixed), &fixed_table),
                     (MptCellType::Lookup(Table::Exp), &mult_table),
-                    (MptCellType::MemParentSInput, &parent_s_table),
-                    (MptCellType::MemParentCInput, &parent_c_table),
-                    (MptCellType::MemKeySInput, &key_s_table),
-                    (MptCellType::MemKeyCInput, &key_c_table),
-                    (MptCellType::MemMainInput, &main_table),
                 ],
             );
+            memory.build_lookups(meta);
             cb.base.build_dynamic_lookups(
                 meta,
                 &[vec![FIXED]].concat(),
