@@ -1200,11 +1200,21 @@ macro_rules! _matchx {
     }};
 }
 
+
+#[macro_export]
+macro_rules! _to_and {
+    (($($condition:expr),*)) => {
+        and::expr([$($condition.expr()),*])
+    };
+    ($condition:expr) => {
+        $condition.expr()
+    }
+}
 /// ifx
 #[macro_export]
 macro_rules! _ifx {
-    ($cb:expr, $($condition:expr),* => $when_true:block $(elsex $when_false:block)?)  => {{
-        let condition = and::expr([$($condition.expr()),*]);
+    ($cb:expr,$condition:tt => $when_true:block $(elsex $when_false:block)?)  => {{
+        let condition = _to_and!($condition);
 
         $cb.push_condition(condition.expr());
         let ret_true = $when_true;
@@ -1317,7 +1327,7 @@ macro_rules! _to_vec {
 macro_rules! circuit {
     ([$meta:expr, $cb:expr], $content:block) => {{
         #[allow(unused_imports)]
-        use $crate::{concat_with_preamble, _require, _matchx, _ifx, _unreachablex, _to_vec};
+        use $crate::{concat_with_preamble, _require, _matchx, _ifx, _unreachablex, _to_vec, _to_and};
         #[allow(unused_imports)]
         use gadgets::util::{and, not, or, sum, Expr};
         #[allow(unused_imports)]
@@ -1423,33 +1433,18 @@ macro_rules! circuit {
 
         #[allow(unused_macros)]
         macro_rules! ifx {
+            ($condition:tt => $when_true:block elsex $when_false:block) => {{
+                _ifx!($cb, ($condition) => $when_true elsex $when_false)
+            }};
             ($condition:expr => $when_true:block elsex $when_false:block) => {{
                 _ifx!($cb, $condition => $when_true elsex $when_false)
             }};
-            ($condition_a:expr, $condition_b:expr => $when_true:block elsex $when_false:block) => {{
-                _ifx!($cb, $condition_a, $condition_b => $when_true elsex $when_false)
-            }};
-            ($condition_a:expr, $condition_b:expr, $condition_c:expr => $when_true:block elsex $when_false:block) => {{
-                _ifx!($cb, $condition_a, $condition_b, $condition_c => $when_true elsex $when_false)
-            }};
-            ($condition_a:expr, $condition_b:expr, $condition_c:expr, $condition_d:expr => $when_true:block elsex $when_false:block) => {{
-                _ifx!($cb, $condition_a, $condition_b, $condition_c, $condition_d => $when_true elsex $when_false)
-            }};
 
-            ($condition:expr => $when_true:block) => {{
+            ($condition:tt => $when_true:block) => {{
                 _ifx!($cb, $condition => $when_true)
             }};
-            ($condition_a:expr, $condition_b:expr => $when_true:block) => {{
-                _ifx!($cb, $condition_a, $condition_b => $when_true)
-            }};
-            ($condition_a:expr, $condition_b:expr, $condition_c:expr => $when_true:block) => {{
-                _ifx!($cb, $condition_a, $condition_b, $condition_c => $when_true)
-            }};
-            ($condition_a:expr, $condition_b:expr, $condition_c:expr, $condition_d:expr => $when_true:block) => {{
-                _ifx!($cb, $condition_a, $condition_b, $condition_c, $condition_d => $when_true)
-            }};
-            ($condition_a:expr, $condition_b:expr, $condition_c:expr, $condition_d:expr, $condition_e:expr => $when_true:block) => {{
-                _ifx!($cb, $condition_a, $condition_b, $condition_c, $condition_d, $condition_e => $when_true)
+            ($condition:expr => $when_true:block) => {{
+                _ifx!($cb, $condition => $when_true)
             }};
         }
 
