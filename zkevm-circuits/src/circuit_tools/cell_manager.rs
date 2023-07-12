@@ -1,7 +1,7 @@
 //! Cell manager
 use crate::{
     circuit_tools::cached_region::CachedRegion,
-    util::{query_expression, Expr},
+    util::{query_expression, Expr}, evm_circuit::util::rlc,
 };
 
 use crate::table::LookupTable;
@@ -359,6 +359,25 @@ impl<F: Field, C: CellType> CellManager<F, C> {
             }
         }
         columns
+    }
+
+    pub(crate) fn build_lookups_from_table(
+        &self,
+        meta: &mut ConstraintSystem<F>,
+        tables: &[(C, &dyn LookupTable<F>)],
+        challenge: Expression<F>,
+    ) {
+        for (cell_type, table) in tables {
+            for col in self.get_typed_columns(*cell_type) {
+                let name = format!("{:?}", cell_type);
+                meta.lookup_any(Box::leak(name.into_boxed_str()), |meta| {
+                    vec![(
+                        col.expr,
+                        rlc::expr(&table.table_exprs(meta), challenge.expr()),
+                    )]
+                });
+            }
+        }
     }
 }
 
