@@ -1089,33 +1089,8 @@ macro_rules! _require {
         }
     }};
 
-    // Lookup using a tuple
-    ($cb:expr, ($($v:expr),+) => @$tag:expr) => {{
-        let description = concat_with_preamble!(
-            "(",
-            $(
-                stringify!($v),
-                ", ",
-            )*
-            ") => @",
-            stringify!($tag),
-        );
-        $cb.add_lookup(
-            description,
-            $tag,
-            vec![$($v.expr(),)*],
-        );
-    }};
-    ($cb:expr, $descr:expr, ($($v:expr),+)  => @$tag:expr) => {{
-        $cb.add_lookup(
-            Box::leak($descr.into_boxed_str()),
-            $tag,
-            vec![$($v.expr(),)*],
-        );
-    }};
 
-    // Lookup using an array
-    ($cb:expr, $values:expr => @$tag:expr) => {{
+    ($cb:expr, $values:tt => @$tag:expr) => {{
         let description = concat_with_preamble!(
             stringify!($values),
             " => @",
@@ -1124,51 +1099,19 @@ macro_rules! _require {
         $cb.add_lookup(
             description,
             $tag,
-            $values.clone(),
+            _to_vec!($values),
         );
     }};
-    ($cb:expr, $descr:expr, $values:expr => @$tag:expr) => {{
+    ($cb:expr, $descr:expr, $values:tt => @$tag:expr) => {{
         $cb.add_lookup(
             Box::leak($descr.to_string().into_boxed_str()),
             $tag,
-            $values.clone(),
+            _to_vec!($values),
         );
     }};
 
-        // Lookup using a tuple
-        ($cb:expr, ($($v:expr),+) => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
-            let description = concat_with_preamble!(
-                "(",
-                $(
-                    stringify!($v),
-                    ", ",
-                )*
-                ") => @",
-                stringify!($tag),
-            );
-            $cb.add_dynamic_lookup(
-                description,
-                $tag,
-                vec![$($v.expr(),)*],
-                $is_fixed,
-                $compress,
-                $is_split,
-            );
-        }};
-        ($cb:expr, $descr:expr, ($($v:expr),+)  => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
-            $cb.add_dynamic_lookup(
-                Box::leak($descr.into_boxed_str()),
-                $tag,
-                vec![$($v.expr(),)*],
-                $is_fixed,
-                $compress,
-                $is_split,
-            );
-        }};
-
-
         // Lookup using an array
-        ($cb:expr, $values:expr => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
+        ($cb:expr, $values:tt => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
             let description = concat_with_preamble!(
                 stringify!($values),
                 " => @",
@@ -1177,45 +1120,25 @@ macro_rules! _require {
             $cb.add_dynamic_lookup(
                 description,
                 $tag,
-                $values.clone(),
+                _to_vec!($values),
                 $is_fixed,
                 $compress,
                 $is_split,
             );
         }};
-        ($cb:expr, $descr:expr, $values:expr => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
+        ($cb:expr, $descr:expr, $values:tt => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
             $cb.add_dynamic_lookup(
                 Box::leak($descr.into_boxed_str()),
                 $tag,
-                $values.clone(),
+                _to_vec!($values),
                 $is_fixed,
                 $compress,
                 $is_split,
             );
         }};
 
-    // Put values in a lookup table using a tuple
-    ($cb:expr, @$tag:expr => ($($v:expr),+)) => {{
-        let description = concat_with_preamble!(
-            "@",
-            stringify!($tag),
-            " => (",
-            $(
-                stringify!($v),
-                ", ",
-            )*
-            ")",
-        );
-        $cb.store_dynamic_table(
-            description,
-            $tag,
-            vec![$($v.expr(),)*],
-            false,
-            false,
-        );
-    }};
     // Put values in a lookup table using an array
-    ($cb:expr, @$tag:expr => $values:expr) => {{
+    ($cb:expr, @$tag:expr => $values:tt) => {{
         let description = concat_with_preamble!(
             "@",
             stringify!($tag),
@@ -1226,49 +1149,12 @@ macro_rules! _require {
         $cb.store_dynamic_table(
             description,
             $tag,
-            $values,
+            _to_vec!($values),
             false,
             false,
         );
     }};
 
-    // Put values in a lookup table using a tuple
-    ($cb:expr, @$tag:expr => ($($v:expr),+), $compress:expr, $is_split:expr) => {{
-        let description = concat_with_preamble!(
-            "@",
-            stringify!($tag),
-            " => (",
-            $(
-                stringify!($v),
-                ", ",
-            )*
-            ")",
-        );
-        $cb.store_dynamic_table(
-            description,
-            $tag,
-            vec![$($v.expr(),)*],
-            $compress,
-            $is_split,
-        );
-    }};
-    // Put values in a lookup table using an array
-    ($cb:expr, @$tag:expr => $values:expr, $compress:expr, $is_split:expr) => {{
-        let description = concat_with_preamble!(
-            "@",
-            stringify!($tag),
-            " => (",
-            stringify!($values),
-            ")",
-        );
-        $cb.store_dynamic_table(
-            description,
-            $tag,
-            $values,
-            $compress,
-            $is_split,
-        );
-    }};
 }
 
 /// matchx
@@ -1414,6 +1300,16 @@ macro_rules! assignf {
     }};
 }
 
+#[macro_export]
+macro_rules! _to_vec {
+    (($($tts:expr), *)) => {
+        vec![$($tts.expr()), *]
+    };
+    ($tts:expr) => {
+        $tts
+    }
+}
+
 /// Circuit builder macros
 /// Nested macro's can't do repetition <https://github.com/rust-lang/rust/issues/35853>
 /// so we expose a couple of permutations here manually.
@@ -1421,7 +1317,7 @@ macro_rules! assignf {
 macro_rules! circuit {
     ([$meta:expr, $cb:expr], $content:block) => {{
         #[allow(unused_imports)]
-        use $crate::{concat_with_preamble, _require, _matchx, _ifx, _unreachablex};
+        use $crate::{concat_with_preamble, _require, _matchx, _ifx, _unreachablex, _to_vec};
         #[allow(unused_imports)]
         use gadgets::util::{and, not, or, sum, Expr};
         #[allow(unused_imports)]
@@ -1485,61 +1381,44 @@ macro_rules! circuit {
                 _require!($cb, $name, $lhs => $rhs);
             }};
 
-            (($a:expr) => @$tag:expr) => {{
-                _require!($cb, ($a) => @$tag);
-            }};
 
-            (($a:expr, $b:expr) => @$tag:expr) => {{
-                _require!($cb, ($a, $b) => @$tag);
-            }};
 
-            (($a:expr, $b:expr, $c:expr) => @$tag:expr) => {{
-                _require!($cb, ($a, $b, $c) => @$tag);
+            ($values:tt => @$tag:expr) => {{
+                _require!($cb, $values => @$tag);
             }};
-
-            (($a:expr, $b:expr, $c:expr, $d:expr) => @$tag:expr) => {{
-                _require!($cb, ($a, $b, $c, $d) => @$tag);
-            }};
-
             ($values:expr => @$tag:expr) => {{
                 _require!($cb, $values => @$tag);
             }};
-
+            ($descr:expr, $values:tt => @$tag:expr) => {{
+                _require!($cb, $descr, $values => @$tag);
+            }};
             ($descr:expr, $values:expr => @$tag:expr) => {{
                 _require!($cb, $descr, $values => @$tag);
             }};
 
-            (($a:expr) => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
-                _require!($cb, ($a) => @$tag, $is_fixed, $compress, $is_split);
-            }};
 
-            (($a:expr, $b:expr) => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
-                _require!($cb, ($a, $b) => @$tag, $is_fixed, $compress, $is_split);
+            ($values:tt => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
+                _require!($cb, $values => @$tag, $is_fixed, $compress, $is_split);
             }};
-
-            (($a:expr, $b:expr, $c:expr) => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
-                _require!($cb, ($a, $b, $c) => @$tag, $is_fixed, $compress, $is_split);
-            }};
-
-            (($a:expr, $b:expr, $c:expr, $d:expr) => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
-                _require!($cb, ($a, $b, $c, $d) => @$tag, $is_fixed, $compress, $is_split);
-            }};
-
             ($values:expr => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
                 _require!($cb, $values => @$tag, $is_fixed, $compress, $is_split);
             }};
-
+            ($descr:expr, $values:tt => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
+                _require!($cb, $descr, $values => @$tag, $is_fixed, $compress, $is_split);
+            }};
             ($descr:expr, $values:expr => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
                 _require!($cb, $descr, $values => @$tag, $is_fixed, $compress, $is_split);
             }};
 
-            (@$tag:expr => ($a:expr, $b:expr, $c:expr)) => {{
-                _require!($cb, @$tag => ($a, $b, $c));
-            }};
 
+
+            (@$tag:expr => $values:tt) => {{
+                _require!($cb, @$tag => $values);
+            }};
             (@$tag:expr => $values:expr) => {{
                 _require!($cb, @$tag => $values);
             }};
+
         }
 
         #[allow(unused_macros)]
