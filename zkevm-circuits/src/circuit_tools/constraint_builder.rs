@@ -1045,38 +1045,7 @@ macro_rules! _require {
     // Lookups build from table
     // only reduce flag is allowed
 
-    // Lookup using a tuple
-    ($cb:expr, ($($v:expr),+) =>> @$tag:expr, ($($reduce:expr)?)) => {{
-        let description = concat_with_preamble!(
-            "(",
-            $(
-                stringify!($v),
-                ", ",
-            )*
-            ") => @",
-            stringify!($tag),
-        );
-        $cb.add_lookup(
-            description,
-            $tag,
-            vec![$($v.expr(),)*],
-            bool::default(),
-            bool::default(),
-            vec![$($reduce:expr)?].contains(&REDUCE),
-        );
-    }};
-    ($cb:expr, $descr:expr, ($($v:expr),+)  =>> @$tag:expr, ($($reduce:expr)?)) => {{
-        $cb.add_lookup(
-            Box::leak($descr.into_boxed_str()),
-            $tag,
-            vec![$($v.expr(),)*],
-            bool::default(),
-            bool::default(),
-            vec![$($reduce:expr)?].contains(&REDUCE),
-        );
-    }};
-
-    // Lookup using an array
+    // Lookup using a array
     ($cb:expr, $values:expr =>> @$tag:expr, ($($reduce:expr)?)) => {{
         let description = concat_with_preamble!(
             stringify!($values),
@@ -1086,17 +1055,18 @@ macro_rules! _require {
         $cb.add_lookup(
             description,
             $tag,
-            $values.clone(),
+            _to_vec!($values),
             bool::default(),
             bool::default(),
             vec![$($reduce:expr)?].contains(&REDUCE),
         );
     }};
-    ($cb:expr, $descr:expr, $values:expr =>> @$tag:expr, ($($reduce:expr)?)) => {{
+     // Lookup using a tuple
+    ($cb:expr, $descr:expr, $values:tt =>> @$tag:expr, ($($reduce:expr)?)) => {{
         $cb.add_lookup(
             Box::leak($descr.to_string().into_boxed_str()),
             $tag,
-            $values.clone(),
+            _to_vec!($values),
             bool::default(),
             bool::default(),
             vec![$($reduce:expr)?].contains(&REDUCE),
@@ -1104,42 +1074,8 @@ macro_rules! _require {
     }};
 
     // -----------------------------------------------------
-
-
     // Lookup using a tuple
-    ($cb:expr, ($($v:expr),+) => @$tag:expr, ($($options:expr), *)) => {{
-        let description = concat_with_preamble!(
-            "(",
-            $(
-                stringify!($v),
-                ", ",
-            )*
-            ") => @",
-            stringify!($tag),
-        );
-        $cb.add_lookup(
-            description,
-            $tag,
-            vec![$($v.expr(),)*],
-            vec![$($options:expr), *].contains(&TO_FIX),
-            vec![$($options:expr), *].contains(&COMPRESS),
-            vec![$($options:expr), *].contains(&REDUCE),
-        );
-    }};
-    ($cb:expr, $descr:expr, ($($v:expr),+)  => @$tag:expr, ($($options:expr), *)) => {{
-        $cb.add_lookup(
-            Box::leak($descr.into_boxed_str()),
-            $tag,
-            vec![$($v.expr(),)*],
-            vec![$($options:expr), *].contains(&TO_FIX),
-            vec![$($options:expr), *].contains(&COMPRESS),
-            vec![$($options:expr), *].contains(&REDUCE),
-        );
-    }};
-
-
-    // Lookup using an array
-    ($cb:expr, $values:expr => @$tag:expr, ($($options:expr), *)) => {{
+    ($cb:expr, $values:tt => @$tag:expr, ($($options:expr), *)) => {{
         let description = concat_with_preamble!(
             stringify!($values),
             " => @",
@@ -1148,17 +1084,17 @@ macro_rules! _require {
         $cb.add_lookup(
             description,
             $tag,
-            $values.clone(),
+            _to_vec!($values),
             vec![$($options:expr), *].contains(&TO_FIX),
             vec![$($options:expr), *].contains(&COMPRESS),
             vec![$($options:expr), *].contains(&REDUCE),
         );
     }};
-    ($cb:expr, $descr:expr, $values:expr => @$tag:expr, ($($options:expr), *)) => {{
+    ($cb:expr, $descr:expr, $values:tt => @$tag:expr, ($($options:expr), *)) => {{
         $cb.add_lookup(
             Box::leak($descr.into_boxed_str()),
             $tag,
-            $values.clone(),
+            _to_vec!($values),
             vec![$($options:expr), *].contains(&TO_FIX),
             vec![$($options:expr), *].contains(&COMPRESS),
             vec![$($options:expr), *].contains(&REDUCE),
@@ -1169,27 +1105,7 @@ macro_rules! _require {
 
 
     // Put values in a lookup table using a tuple
-    ($cb:expr, @$tag:expr, ($($options:expr), *) => ($($v:expr),+)) => {{
-        let description = concat_with_preamble!(
-            "@",
-            stringify!($tag),
-            " => (",
-            $(
-                stringify!($v),
-                ", ",
-            )*
-            ")",
-        );
-        $cb.store_dynamic_table(
-            description,
-            $tag,
-            vec![$($v.expr(),)*],
-            vec![$($options:expr), *].contains(&COMPRESS),
-            vec![$($options:expr), *].contains(&REDUCE),
-        );
-    }};
-    // Put values in a lookup table using an array
-    ($cb:expr, @$tag:expr, ($($options:expr), *) => $values:expr) => {{
+    ($cb:expr, @$tag:expr, ($($options:expr), *) => $values:tt) => {{
         let description = concat_with_preamble!(
             "@",
             stringify!($tag),
@@ -1200,7 +1116,7 @@ macro_rules! _require {
         $cb.store_dynamic_table(
             description,
             $tag,
-            $values,
+            _to_vec!($values),
             vec![$($options:expr), *].contains(&COMPRESS),
             vec![$($options:expr), *].contains(&REDUCE),
         );
@@ -1214,7 +1130,7 @@ macro_rules! _require {
 /// unreachablex! macro).
 #[macro_export]
 macro_rules! _matchx {
-    ($cb:expr, $($condition:expr => $when:expr),* $(, _ => $catch_all:expr)? $(,)?)  => {{
+    ($cb:expr, ($($condition:expr => $when:expr),* $(, _ => $catch_all:expr)? $(,)?))  => {{
         let mut conditions = Vec::new();
         let mut cases = Vec::new();
         $(
@@ -1250,11 +1166,21 @@ macro_rules! _matchx {
     }};
 }
 
+
+#[macro_export]
+macro_rules! _to_and {
+    (($($condition:expr),*)) => {
+        and::expr([$($condition.expr()),*])
+    };
+    ($condition:expr) => {
+        $condition.expr()
+    }
+}
 /// ifx
 #[macro_export]
 macro_rules! _ifx {
-    ($cb:expr, $($condition:expr),* => $when_true:block $(elsex $when_false:block)?)  => {{
-        let condition = and::expr([$($condition.expr()),*]);
+    ($cb:expr,$condition:tt => $when_true:block $(elsex $when_false:block)?)  => {{
+        let condition = _to_and!($condition);
 
         $cb.push_condition(condition.expr());
         let ret_true = $when_true;
@@ -1350,6 +1276,16 @@ macro_rules! assignf {
     }};
 }
 
+#[macro_export]
+macro_rules! _to_vec {
+    (($($tts:expr), *)) => {
+        vec![$($tts.expr()), *]
+    };
+    ($tts:expr) => {
+        $tts
+    }
+}
+
 /// Circuit builder macros
 /// Nested macro's can't do repetition <https://github.com/rust-lang/rust/issues/35853>
 /// so we expose a couple of permutations here manually.
@@ -1357,7 +1293,7 @@ macro_rules! assignf {
 macro_rules! circuit {
     ([$meta:expr, $cb:expr], $content:block) => {{
         #[allow(unused_imports)]
-        use $crate::{concat_with_preamble, _require, _matchx, _ifx, _unreachablex};
+        use $crate::{concat_with_preamble, _require, _matchx, _ifx, _unreachablex, _to_vec, _to_and};
         #[allow(unused_imports)]
         use gadgets::util::{and, not, or, sum, Expr};
         #[allow(unused_imports)]
@@ -1423,72 +1359,36 @@ macro_rules! circuit {
 
             // Lookups build from table
             // only reduce flag is allowed
-
-            (($a:expr) =>> @$tag:expr, $reduce:expr) => {{
-                _require!($cb, ($a) =>> @$tag, $reduce);
+            ($values:tt => @$tag:expr, $reduce:expr) => {{
+                _require!($cb, $values => @$tag, $reduce);
             }};
-
-            (($a:expr, $b:expr) =>> @$tag:expr, $reduce:expr) => {{
-                _require!($cb, ($a, $b) =>> @$tag, $reduce);
-            }};
-
-            (($a:expr, $b:expr, $c:expr)  =>> @$tag:expr, $reduce:expr) => {{
-                _require!($cb, ($a, $b, $c) =>> @$tag, $reduce);
-            }};
-
-            (($a:expr, $b:expr, $c:expr, $d:expr) =>> @$tag:expr, $reduce:expr) => {{
-                _require!($cb, ($a, $b, $c, $d) =>> @$tag, $reduce);
-            }};
-
             ($values:expr =>> @$tag:expr, $reduce:expr) => {{
                 _require!($cb, $values =>> @$tag, $reduce);
             }};
-
+            ($descr:expr, $values:tt =>> @$tag:expr, $reduce:expr) => {{
+                _require!($cb, $descr, $values =>> @$tag, $reduce);
+            }};
             ($descr:expr, $values:expr =>> @$tag:expr, $reduce:expr) => {{
                 _require!($cb, $descr, $values =>> @$tag, $reduce);
             }};
 
-            // Lookups build from data
-            // optional to_fixed, compress, reduce
 
-            (($a:expr) => @$tag:expr, $options:expr) => {{
-                _require!($cb, ($a) => @$tag, $options);
+            ($values:tt => @$tag:expr,  $options:expr) => {{
+                _require!($cb, $values => @$tag, $options);
             }};
-
-            (($a:expr, $b:expr) => @$tag:expr, $options:expr) => {{
-                _require!($cb, ($a, $b) => @$tag, $options);
-            }};
-
-            (($a:expr, $b:expr, $c:expr) => @$tag:expr, $options:expr) => {{
-                _require!($cb, ($a, $b, $c) => @$tag, $options);
-            }};
-
-            (($a:expr, $b:expr, $c:expr, $d:expr) => @$tag:expr, $options:expr) => {{
-                _require!($cb, ($a, $b, $c, $d) => @$tag, $options);
-            }};
-
             ($values:expr => @$tag:expr, $options:expr) => {{
                 _require!($cb, $values => @$tag, $options);
             }};
-
+            ($descr:expr, $values:tt => @$tag:expr, $options:expr) => {{
+                _require!($cb, $descr, $values => @$tag, $options);
+            }};
             ($descr:expr, $values:expr => @$tag:expr, $options:expr) => {{
                 _require!($cb, $descr, $values => @$tag, $options);
             }};
 
-            // Table to build lookup
-
-            (@$tag:expr, $options:expr => ($a:expr)) => {{
-                _require!($cb, @$tag, $options => ($a));
+            (@$tag:expr, $options:expr => $values:tt) => {{
+                _require!($cb, @$tag, $options => $values);
             }};
-
-            (@$tag:expr, $options:expr => ($a:expr, $b:expr)) => {{
-                _require!($cb, @$tag, $options => ($a, $b));
-            }};
-
-            (@$tag:expr, $options:expr => ($a:expr, $b:expr, $c:expr)) => {{
-                _require!($cb, @$tag, $options => ($a, $b, $c));
-            }};
-
             (@$tag:expr, $options:expr => $values:expr) => {{
                 _require!($cb, @$tag, $options => $values);
             }};
@@ -1496,63 +1396,27 @@ macro_rules! circuit {
 
         #[allow(unused_macros)]
         macro_rules! ifx {
+            ($condition:tt => $when_true:block elsex $when_false:block) => {{
+                _ifx!($cb, ($condition) => $when_true elsex $when_false)
+            }};
             ($condition:expr => $when_true:block elsex $when_false:block) => {{
                 _ifx!($cb, $condition => $when_true elsex $when_false)
             }};
-            ($condition_a:expr, $condition_b:expr => $when_true:block elsex $when_false:block) => {{
-                _ifx!($cb, $condition_a, $condition_b => $when_true elsex $when_false)
-            }};
-            ($condition_a:expr, $condition_b:expr, $condition_c:expr => $when_true:block elsex $when_false:block) => {{
-                _ifx!($cb, $condition_a, $condition_b, $condition_c => $when_true elsex $when_false)
-            }};
-            ($condition_a:expr, $condition_b:expr, $condition_c:expr, $condition_d:expr => $when_true:block elsex $when_false:block) => {{
-                _ifx!($cb, $condition_a, $condition_b, $condition_c, $condition_d => $when_true elsex $when_false)
-            }};
 
-            ($condition:expr => $when_true:block) => {{
+            ($condition:tt => $when_true:block) => {{
                 _ifx!($cb, $condition => $when_true)
             }};
-            ($condition_a:expr, $condition_b:expr => $when_true:block) => {{
-                _ifx!($cb, $condition_a, $condition_b => $when_true)
-            }};
-            ($condition_a:expr, $condition_b:expr, $condition_c:expr => $when_true:block) => {{
-                _ifx!($cb, $condition_a, $condition_b, $condition_c => $when_true)
-            }};
-            ($condition_a:expr, $condition_b:expr, $condition_c:expr, $condition_d:expr => $when_true:block) => {{
-                _ifx!($cb, $condition_a, $condition_b, $condition_c, $condition_d => $when_true)
-            }};
-            ($condition_a:expr, $condition_b:expr, $condition_c:expr, $condition_d:expr, $condition_e:expr => $when_true:block) => {{
-                _ifx!($cb, $condition_a, $condition_b, $condition_c, $condition_d, $condition_e => $when_true)
+            ($condition:expr => $when_true:block) => {{
+                _ifx!($cb, $condition => $when_true)
             }};
         }
 
         #[allow(unused_macros)]
         macro_rules! matchx {
-            ($condition_a:expr => $when_a:expr,) => {{
-                _matchx!($cb, $condition_a => $when_a)
-            }};
-            ($condition_a:expr => $when_a:expr, $condition_b:expr => $when_b:expr,) => {{
-                _matchx!($cb, $condition_a => $when_a, $condition_b => $when_b)
-            }};
-            ($condition_a:expr => $when_a:expr, $condition_b:expr => $when_b:expr, $condition_c:expr => $when_c:expr,) => {{
-                _matchx!($cb, $condition_a => $when_a, $condition_b => $when_b, $condition_c => $when_c)
-            }};
-            ($condition_a:expr => $when_a:expr, $condition_b:expr => $when_b:expr, $condition_c:expr => $when_c:expr, $condition_d:expr => $when_d:expr,) => {{
-                _matchx!($cb, $condition_a => $when_a, $condition_b => $when_b, $condition_c => $when_c, $condition_d => $when_d,)
+            ($condition_to_when:tt) => {{
+                _matchx!($cb, $condition_to_when)
             }};
 
-            ($condition_a:expr => $when_a:expr, _ => $catch_all:expr,) => {{
-                _matchx!($cb, $condition_a => $when_a, _ => $catch_all,)
-            }};
-            ($condition_a:expr => $when_a:expr, $condition_b:expr => $when_b:expr, _ => $catch_all:expr,) => {{
-                _matchx!($cb, $condition_a => $when_a, $condition_b => $when_b, _ => $catch_all,)
-            }};
-            ($condition_a:expr => $when_a:expr, $condition_b:expr => $when_b:expr, $condition_c:expr => $when_c:expr, _ => $catch_all:expr,) => {{
-                _matchx!($cb, $condition_a => $when_a, $condition_b => $when_b, $condition_c => $when_c, _ => $catch_all,)
-            }};
-            ($condition_a:expr => $when_a:expr, $condition_b:expr => $when_b:expr, $condition_c:expr => $when_c:expr, $condition_d:expr => $when_d:expr, _ => $catch_all:expr,) => {{
-                _matchx!($cb, $condition_a => $when_a, $condition_b => $when_b, $condition_c => $when_c, $condition_d => $when_d, _ => $catch_all,)
-            }};
         }
 
         #[allow(unused_macros)]
