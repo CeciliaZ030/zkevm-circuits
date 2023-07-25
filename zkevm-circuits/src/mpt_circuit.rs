@@ -342,7 +342,7 @@ impl<F: Field> MPTConfig<F> {
                         require!(a!(state_machine.is_start) => true);
                     }};
                     // Main state machine
-                    matchx! {
+                    matchx! {(
                         a!(state_machine.is_start) => {
                             state_machine.step_constraints(meta, &mut cb, StartRowType::Count as usize);
                             cb.base.push_region(MPTRegion::Start as usize);
@@ -372,7 +372,7 @@ impl<F: Field> MPTConfig<F> {
                             cb.base.pop_region();
                         },
                         _ => ctx.memory.build_constraints(&mut cb.base, f!(q_first)),
-                    };
+                    )};
                     // Only account and storage rows can have lookups, disable lookups on all other rows
                     ifx! {not!(a!(state_machine.is_account) + a!(state_machine.is_storage)) => {
                         require!(a!(ctx.mpt_table.proof_type) => MPTProofType::Disabled.expr());

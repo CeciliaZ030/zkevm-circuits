@@ -1157,6 +1157,22 @@ macro_rules! _require {
 
 }
 
+#[macro_export]
+macro_rules! _to_match {
+    ($($condition:expr => $when:expr),*) => {
+        $($condition:expr => $when:expr),*
+    };
+}
+// #[macro_export]
+// macro_rules! _to_match {
+//     (($($tts:expr), *)) => {
+//         vec![$($tts.expr()), *]
+//     };
+//     ($tts:expr) => {
+//         $tts
+//     }
+// }
+
 /// matchx
 /// Supports `_` which works the same as in the normal `match`: if none of the
 /// other arms are active the `_` arm will be executed and so can be used to
@@ -1320,6 +1336,8 @@ macro_rules! _to_vec {
     }
 }
 
+
+
 /// Circuit builder macros
 /// Nested macro's can't do repetition <https://github.com/rust-lang/rust/issues/35853>
 /// so we expose a couple of permutations here manually.
@@ -1327,7 +1345,7 @@ macro_rules! _to_vec {
 macro_rules! circuit {
     ([$meta:expr, $cb:expr], $content:block) => {{
         #[allow(unused_imports)]
-        use $crate::{concat_with_preamble, _require, _matchx, _ifx, _unreachablex, _to_vec, _to_and};
+        use $crate::{concat_with_preamble, _require, _matchx, _ifx, _unreachablex, _to_vec, _to_and, _to_match};
         #[allow(unused_imports)]
         use gadgets::util::{and, not, or, sum, Expr};
         #[allow(unused_imports)]
@@ -1450,31 +1468,35 @@ macro_rules! circuit {
 
         #[allow(unused_macros)]
         macro_rules! matchx {
-            ($condition_a:expr => $when_a:expr,) => {{
-                _matchx!($cb, $condition_a => $when_a)
+            ($condition_to_when:tt) => {{
+                _to_match!($condition_to_when)
+                // _matchx!($cb, _to_match!($condition_to_when))
             }};
-            ($condition_a:expr => $when_a:expr, $condition_b:expr => $when_b:expr,) => {{
-                _matchx!($cb, $condition_a => $when_a, $condition_b => $when_b)
-            }};
-            ($condition_a:expr => $when_a:expr, $condition_b:expr => $when_b:expr, $condition_c:expr => $when_c:expr,) => {{
-                _matchx!($cb, $condition_a => $when_a, $condition_b => $when_b, $condition_c => $when_c)
-            }};
-            ($condition_a:expr => $when_a:expr, $condition_b:expr => $when_b:expr, $condition_c:expr => $when_c:expr, $condition_d:expr => $when_d:expr,) => {{
-                _matchx!($cb, $condition_a => $when_a, $condition_b => $when_b, $condition_c => $when_c, $condition_d => $when_d,)
-            }};
+            // ($condition_a:expr => $when_a:expr,) => {{
+            //     _matchx!($cb, $condition_a => $when_a)
+            // }};
+            // ($condition_a:expr => $when_a:expr, $condition_b:expr => $when_b:expr,) => {{
+            //     _matchx!($cb, $condition_a => $when_a, $condition_b => $when_b)
+            // }};
+            // ($condition_a:expr => $when_a:expr, $condition_b:expr => $when_b:expr, $condition_c:expr => $when_c:expr,) => {{
+            //     _matchx!($cb, $condition_a => $when_a, $condition_b => $when_b, $condition_c => $when_c)
+            // }};
+            // ($condition_a:expr => $when_a:expr, $condition_b:expr => $when_b:expr, $condition_c:expr => $when_c:expr, $condition_d:expr => $when_d:expr,) => {{
+            //     _matchx!($cb, $condition_a => $when_a, $condition_b => $when_b, $condition_c => $when_c, $condition_d => $when_d,)
+            // }};
 
-            ($condition_a:expr => $when_a:expr, _ => $catch_all:expr,) => {{
-                _matchx!($cb, $condition_a => $when_a, _ => $catch_all,)
-            }};
-            ($condition_a:expr => $when_a:expr, $condition_b:expr => $when_b:expr, _ => $catch_all:expr,) => {{
-                _matchx!($cb, $condition_a => $when_a, $condition_b => $when_b, _ => $catch_all,)
-            }};
-            ($condition_a:expr => $when_a:expr, $condition_b:expr => $when_b:expr, $condition_c:expr => $when_c:expr, _ => $catch_all:expr,) => {{
-                _matchx!($cb, $condition_a => $when_a, $condition_b => $when_b, $condition_c => $when_c, _ => $catch_all,)
-            }};
-            ($condition_a:expr => $when_a:expr, $condition_b:expr => $when_b:expr, $condition_c:expr => $when_c:expr, $condition_d:expr => $when_d:expr, _ => $catch_all:expr,) => {{
-                _matchx!($cb, $condition_a => $when_a, $condition_b => $when_b, $condition_c => $when_c, $condition_d => $when_d, _ => $catch_all,)
-            }};
+            // ($condition_a:expr => $when_a:expr, _ => $catch_all:expr,) => {{
+            //     _matchx!($cb, $condition_a => $when_a, _ => $catch_all,)
+            // }};
+            // ($condition_a:expr => $when_a:expr, $condition_b:expr => $when_b:expr, _ => $catch_all:expr,) => {{
+            //     _matchx!($cb, $condition_a => $when_a, $condition_b => $when_b, _ => $catch_all,)
+            // }};
+            // ($condition_a:expr => $when_a:expr, $condition_b:expr => $when_b:expr, $condition_c:expr => $when_c:expr, _ => $catch_all:expr,) => {{
+            //     _matchx!($cb, $condition_a => $when_a, $condition_b => $when_b, $condition_c => $when_c, _ => $catch_all,)
+            // }};
+            // ($condition_a:expr => $when_a:expr, $condition_b:expr => $when_b:expr, $condition_c:expr => $when_c:expr, $condition_d:expr => $when_d:expr, _ => $catch_all:expr,) => {{
+            //     _matchx!($cb, $condition_a => $when_a, $condition_b => $when_b, $condition_c => $when_c, $condition_d => $when_d, _ => $catch_all,)
+            // }};
         }
 
         #[allow(unused_macros)]

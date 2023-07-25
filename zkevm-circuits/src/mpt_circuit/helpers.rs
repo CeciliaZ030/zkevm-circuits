@@ -135,7 +135,7 @@ impl<F: Field> LeafKeyGadget<F> {
                             is_key_odd: Expression<F>| {
                 leaf_key_rlc(cb, bytes, key_mult_prev.expr(), is_key_odd.expr(), r)
             };
-            matchx! {
+            matchx! {(
                 rlp_key.is_short() => {
                     // When no nibbles: only terminal prefix at `bytes[1]`.
                     // Else: Terminal prefix + single nibble  at `bytes[1]`
@@ -146,7 +146,7 @@ impl<F: Field> LeafKeyGadget<F> {
                     // First key byte is at `bytes[2]`.
                     calc_rlc(cb, &rlp_key.bytes()[1..34], is_key_odd.expr())
                 },
-            }
+            )}
         })
     }
 
@@ -221,7 +221,7 @@ pub(crate) fn ext_key_rlc_expr<F: Field>(
                 r,
             )
         };
-        matchx! {
+        matchx! {(
             and::expr(&[is_long.expr(), not!(is_key_odd)]) => {
                 // Here we need to multiply nibbles over bytes with different r's so we need to rlc over separate nibbles.
                 // Note that there can be at max 31 key bytes because 32 same bytes would mean
@@ -245,7 +245,7 @@ pub(crate) fn ext_key_rlc_expr<F: Field>(
             is_short => {
                 calc_rlc(cb, &data[0][..1], 1.expr())
             },
-        }
+        )}
     })
 }
 
@@ -1170,7 +1170,7 @@ impl<F: Field> WrongGadget<F> {
         let mut config = WrongGadget::default();
         circuit!([meta, cb.base], {
             // Get the previous key data
-            ifx! {is_non_existing, not!(is_in_empty_tree) => {
+            ifx! {(is_non_existing, not!(is_in_empty_tree)) => {
                 // Calculate the key
                 config.wrong_rlp_key = ListKeyGadget::construct(cb, expected_item);
                 let key_rlc_wrong = key_data.rlc.expr() + config.wrong_rlp_key.key.expr(
