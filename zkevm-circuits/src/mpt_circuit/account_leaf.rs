@@ -365,13 +365,15 @@ impl<F: Field> AccountLeafConfig<F> {
 
             // Put the data in the lookup table
             let (proof_type, value_prev, value) = _matchx! {cb,
-                config.is_nonce_mod => (MPTProofType::NonceChanged.expr(), nonce_rlc[true.idx()].expr(), nonce_rlc[false.idx()].expr()),
-                config.is_balance_mod => (MPTProofType::BalanceChanged.expr(), balance_rlc[true.idx()].expr(), balance_rlc[false.idx()].expr()),
-                config.is_storage_mod => (MPTProofType::StorageChanged.expr(), storage_rlc[true.idx()].expr(), storage_rlc[false.idx()].expr()),
-                config.is_codehash_mod => (MPTProofType::CodeHashChanged.expr(), codehash_rlc[true.idx()].expr(), codehash_rlc[false.idx()].expr()),
-                config.is_account_delete_mod => (MPTProofType::AccountDestructed.expr(), 0.expr(), 0.expr()),
-                config.is_non_existing_account_proof => (MPTProofType::AccountDoesNotExist.expr(), 0.expr(), 0.expr()),
-                _ => (MPTProofType::Disabled.expr(), 0.expr(), 0.expr()),
+                (
+                    config.is_nonce_mod => (MPTProofType::NonceChanged.expr(), nonce_rlc[true.idx()].expr(), nonce_rlc[false.idx()].expr()),
+                    config.is_balance_mod => (MPTProofType::BalanceChanged.expr(), balance_rlc[true.idx()].expr(), balance_rlc[false.idx()].expr()),
+                    config.is_storage_mod => (MPTProofType::StorageChanged.expr(), storage_rlc[true.idx()].expr(), storage_rlc[false.idx()].expr()),
+                    config.is_codehash_mod => (MPTProofType::CodeHashChanged.expr(), codehash_rlc[true.idx()].expr(), codehash_rlc[false.idx()].expr()),
+                    config.is_account_delete_mod => (MPTProofType::AccountDestructed.expr(), 0.expr(), 0.expr()),
+                    config.is_non_existing_account_proof => (MPTProofType::AccountDoesNotExist.expr(), 0.expr(), 0.expr()),
+                    _ => (MPTProofType::Disabled.expr(), 0.expr(), 0.expr()),
+                )
             };
             let address_rlc = ifx! {config.is_non_existing_account_proof => {
                 a!(ctx.mpt_table.address_rlc)
