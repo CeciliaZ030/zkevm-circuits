@@ -967,7 +967,7 @@ impl<F: Field> MPTConstraintBuilder<F> {
         self.base.require_boolean(name, value)
     }
 
-    pub(crate) fn add_dynamic_lookup(
+    pub(crate) fn add_lookup(
         &mut self,
         description: &'static str,
         tag: MptCellType,
@@ -977,16 +977,16 @@ impl<F: Field> MPTConstraintBuilder<F> {
         is_split: bool,
     ) {
         self.base
-            .add_dynamic_lookup(description, tag, values, is_fixed, compress, is_split)
+            .add_lookup(description, tag, values, is_fixed, compress, is_split)
     }
 
-    pub(crate) fn add_lookup(
+    pub(crate) fn add_celltype_lookup(
         &mut self,
         description: &'static str,
         cell_type: MptCellType,
         values: Vec<Expression<F>>,
     ) {
-        self.base.add_lookup(description, cell_type, values)
+        self.base.add_celltype_lookup(description, cell_type, values)
     }
 
     pub(crate) fn store_dynamic_table(

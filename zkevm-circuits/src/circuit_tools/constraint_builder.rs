@@ -103,8 +103,6 @@ impl<F: Field> TabelMerger<F> {
         let (selector, v) = self.merge_unsafe(cb);
         v.iter().map(|v| selector * v.expr()).collect()
     }
-
-
 }
 
 
@@ -621,6 +619,15 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
     }
 }
 
+pub enum LookupOption {
+    ToFixed,
+    Compress,
+    Reduce,
+}
+
+const TO_FIX: LookupOption = LookupOption::ToFixed;
+const COMPRESS: LookupOption = LookupOption::Compress;
+const REDUCE: LookupOption = LookupOption::Reduce;
 
 
 /// General trait to convert to a vec
@@ -1034,8 +1041,12 @@ macro_rules! _require {
         }
     }};
 
+    // -----------------------------------------------------
+    // Lookups build from table
+    // only reduce flag is allowed
+
     // Lookup using a tuple
-    ($cb:expr, ($($v:expr),+) => @$tag:expr) => {{
+    ($cb:expr, ($($v:expr),+) =>> @$tag:expr, ($($reduce:expr)?)) => {{
         let description = concat_with_preamble!(
             "(",
             $(
@@ -1045,102 +1056,120 @@ macro_rules! _require {
             ") => @",
             stringify!($tag),
         );
-        $cb.add_celltype_lookup(
+        $cb.add_lookup(
             description,
             $tag,
             vec![$($v.expr(),)*],
+            bool::default(),
+            bool::default(),
+            vec![$($reduce:expr)?].contains(&REDUCE),
         );
     }};
-    ($cb:expr, $descr:expr, ($($v:expr),+)  => @$tag:expr) => {{
-        $cb.add_celltype_lookup(
+    ($cb:expr, $descr:expr, ($($v:expr),+)  =>> @$tag:expr, ($($reduce:expr)?)) => {{
+        $cb.add_lookup(
             Box::leak($descr.into_boxed_str()),
             $tag,
             vec![$($v.expr(),)*],
+            bool::default(),
+            bool::default(),
+            vec![$($reduce:expr)?].contains(&REDUCE),
         );
     }};
 
     // Lookup using an array
-    ($cb:expr, $values:expr => @$tag:expr) => {{
+    ($cb:expr, $values:expr =>> @$tag:expr, ($($reduce:expr)?)) => {{
         let description = concat_with_preamble!(
             stringify!($values),
             " => @",
             stringify!($tag),
         );
-        $cb.add_celltype_lookup(
+        $cb.add_lookup(
             description,
             $tag,
             $values.clone(),
+            bool::default(),
+            bool::default(),
+            vec![$($reduce:expr)?].contains(&REDUCE),
         );
     }};
-    ($cb:expr, $descr:expr, $values:expr => @$tag:expr) => {{
-        $cb.add_celltype_lookup(
+    ($cb:expr, $descr:expr, $values:expr =>> @$tag:expr, ($($reduce:expr)?)) => {{
+        $cb.add_lookup(
             Box::leak($descr.to_string().into_boxed_str()),
             $tag,
             $values.clone(),
+            bool::default(),
+            bool::default(),
+            vec![$($reduce:expr)?].contains(&REDUCE),
         );
     }};
 
-        // Lookup using a tuple
-        ($cb:expr, ($($v:expr),+) => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
-            let description = concat_with_preamble!(
-                "(",
-                $(
-                    stringify!($v),
-                    ", ",
-                )*
-                ") => @",
-                stringify!($tag),
-            );
-            $cb.add_dynamic_lookup(
-                description,
-                $tag,
-                vec![$($v.expr(),)*],
-                $is_fixed,
-                $compress,
-                $is_split,
-            );
-        }};
-        ($cb:expr, $descr:expr, ($($v:expr),+)  => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
-            $cb.add_dynamic_lookup(
-                Box::leak($descr.into_boxed_str()),
-                $tag,
-                vec![$($v.expr(),)*],
-                $is_fixed,
-                $compress,
-                $is_split,
-            );
-        }};
+    // -----------------------------------------------------
 
 
-        // Lookup using an array
-        ($cb:expr, $values:expr => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
-            let description = concat_with_preamble!(
-                stringify!($values),
-                " => @",
-                stringify!($tag),
-            );
-            $cb.add_dynamic_lookup(
-                description,
-                $tag,
-                $values.clone(),
-                $is_fixed,
-                $compress,
-                $is_split,
-            );
-        }};
-        ($cb:expr, $descr:expr, $values:expr => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
-            $cb.add_dynamic_lookup(
-                Box::leak($descr.into_boxed_str()),
-                $tag,
-                $values.clone(),
-                $is_fixed,
-                $compress,
-                $is_split,
-            );
-        }};
+    // Lookup using a tuple
+    ($cb:expr, ($($v:expr),+) => @$tag:expr, ($($options:expr), *)) => {{
+        let description = concat_with_preamble!(
+            "(",
+            $(
+                stringify!($v),
+                ", ",
+            )*
+            ") => @",
+            stringify!($tag),
+        );
+        $cb.add_lookup(
+            description,
+            $tag,
+            vec![$($v.expr(),)*],
+            vec![$($options:expr), *].contains(&TO_FIX),
+            vec![$($options:expr), *].contains(&COMPRESS),
+            vec![$($options:expr), *].contains(&REDUCE),
+        );
+    }};
+    ($cb:expr, $descr:expr, ($($v:expr),+)  => @$tag:expr, ($($options:expr), *)) => {{
+        $cb.add_lookup(
+            Box::leak($descr.into_boxed_str()),
+            $tag,
+            vec![$($v.expr(),)*],
+            vec![$($options:expr), *].contains(&TO_FIX),
+            vec![$($options:expr), *].contains(&COMPRESS),
+            vec![$($options:expr), *].contains(&REDUCE),
+        );
+    }};
+
+
+    // Lookup using an array
+    ($cb:expr, $values:expr => @$tag:expr, ($($options:expr), *)) => {{
+        let description = concat_with_preamble!(
+            stringify!($values),
+            " => @",
+            stringify!($tag),
+        );
+        $cb.add_lookup(
+            description,
+            $tag,
+            $values.clone(),
+            vec![$($options:expr), *].contains(&TO_FIX),
+            vec![$($options:expr), *].contains(&COMPRESS),
+            vec![$($options:expr), *].contains(&REDUCE),
+        );
+    }};
+    ($cb:expr, $descr:expr, $values:expr => @$tag:expr, ($($options:expr), *)) => {{
+        $cb.add_lookup(
+            Box::leak($descr.into_boxed_str()),
+            $tag,
+            $values.clone(),
+            vec![$($options:expr), *].contains(&TO_FIX),
+            vec![$($options:expr), *].contains(&COMPRESS),
+            vec![$($options:expr), *].contains(&REDUCE),
+        );
+    }};
+
+    // -----------------------------------------------------
+
 
     // Put values in a lookup table using a tuple
-    ($cb:expr, @$tag:expr => ($($v:expr),+)) => {{
+    ($cb:expr, @$tag:expr, ($($options:expr), *) => ($($v:expr),+)) => {{
         let description = concat_with_preamble!(
             "@",
             stringify!($tag),
@@ -1155,12 +1184,12 @@ macro_rules! _require {
             description,
             $tag,
             vec![$($v.expr(),)*],
-            false,
-            false,
+            vec![$($options:expr), *].contains(&COMPRESS),
+            vec![$($options:expr), *].contains(&REDUCE),
         );
     }};
     // Put values in a lookup table using an array
-    ($cb:expr, @$tag:expr => $values:expr) => {{
+    ($cb:expr, @$tag:expr, ($($options:expr), *) => $values:expr) => {{
         let description = concat_with_preamble!(
             "@",
             stringify!($tag),
@@ -1172,46 +1201,8 @@ macro_rules! _require {
             description,
             $tag,
             $values,
-            false,
-            false,
-        );
-    }};
-
-    // Put values in a lookup table using a tuple
-    ($cb:expr, @$tag:expr => ($($v:expr),+), $compress:expr, $is_split:expr) => {{
-        let description = concat_with_preamble!(
-            "@",
-            stringify!($tag),
-            " => (",
-            $(
-                stringify!($v),
-                ", ",
-            )*
-            ")",
-        );
-        $cb.store_dynamic_table(
-            description,
-            $tag,
-            vec![$($v.expr(),)*],
-            $compress,
-            $is_split,
-        );
-    }};
-    // Put values in a lookup table using an array
-    ($cb:expr, @$tag:expr => $values:expr, $compress:expr, $is_split:expr) => {{
-        let description = concat_with_preamble!(
-            "@",
-            stringify!($tag),
-            " => (",
-            stringify!($values),
-            ")",
-        );
-        $cb.store_dynamic_table(
-            description,
-            $tag,
-            $values,
-            $compress,
-            $is_split,
+            vec![$($options:expr), *].contains(&COMPRESS),
+            vec![$($options:expr), *].contains(&REDUCE),
         );
     }};
 }
@@ -1430,60 +1421,76 @@ macro_rules! circuit {
                 _require!($cb, $name, $lhs => $rhs);
             }};
 
-            (($a:expr) => @$tag:expr) => {{
-                _require!($cb, ($a) => @$tag);
+            // Lookups build from table
+            // only reduce flag is allowed
+
+            (($a:expr) =>> @$tag:expr, $reduce:expr) => {{
+                _require!($cb, ($a) =>> @$tag, $reduce);
             }};
 
-            (($a:expr, $b:expr) => @$tag:expr) => {{
-                _require!($cb, ($a, $b) => @$tag);
+            (($a:expr, $b:expr) =>> @$tag:expr, $reduce:expr) => {{
+                _require!($cb, ($a, $b) =>> @$tag, $reduce);
             }};
 
-            (($a:expr, $b:expr, $c:expr) => @$tag:expr) => {{
-                _require!($cb, ($a, $b, $c) => @$tag);
+            (($a:expr, $b:expr, $c:expr)  =>> @$tag:expr, $reduce:expr) => {{
+                _require!($cb, ($a, $b, $c) =>> @$tag, $reduce);
             }};
 
-            (($a:expr, $b:expr, $c:expr, $d:expr) => @$tag:expr) => {{
-                _require!($cb, ($a, $b, $c, $d) => @$tag);
+            (($a:expr, $b:expr, $c:expr, $d:expr) =>> @$tag:expr, $reduce:expr) => {{
+                _require!($cb, ($a, $b, $c, $d) =>> @$tag, $reduce);
             }};
 
-            ($values:expr => @$tag:expr) => {{
-                _require!($cb, $values => @$tag);
+            ($values:expr =>> @$tag:expr, $reduce:expr) => {{
+                _require!($cb, $values =>> @$tag, $reduce);
             }};
 
-            ($descr:expr, $values:expr => @$tag:expr) => {{
-                _require!($cb, $descr, $values => @$tag);
+            ($descr:expr, $values:expr =>> @$tag:expr, $reduce:expr) => {{
+                _require!($cb, $descr, $values =>> @$tag, $reduce);
             }};
 
-            (($a:expr) => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
-                _require!($cb, ($a) => @$tag, $is_fixed, $compress, $is_split);
+            // Lookups build from data
+            // optional to_fixed, compress, reduce
+
+            (($a:expr) => @$tag:expr, $options:expr) => {{
+                _require!($cb, ($a) => @$tag, $options);
             }};
 
-            (($a:expr, $b:expr) => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
-                _require!($cb, ($a, $b) => @$tag, $is_fixed, $compress, $is_split);
+            (($a:expr, $b:expr) => @$tag:expr, $options:expr) => {{
+                _require!($cb, ($a, $b) => @$tag, $options);
             }};
 
-            (($a:expr, $b:expr, $c:expr) => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
-                _require!($cb, ($a, $b, $c) => @$tag, $is_fixed, $compress, $is_split);
+            (($a:expr, $b:expr, $c:expr) => @$tag:expr, $options:expr) => {{
+                _require!($cb, ($a, $b, $c) => @$tag, $options);
             }};
 
-            (($a:expr, $b:expr, $c:expr, $d:expr) => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
-                _require!($cb, ($a, $b, $c, $d) => @$tag, $is_fixed, $compress, $is_split);
+            (($a:expr, $b:expr, $c:expr, $d:expr) => @$tag:expr, $options:expr) => {{
+                _require!($cb, ($a, $b, $c, $d) => @$tag, $options);
             }};
 
-            ($values:expr => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
-                _require!($cb, $values => @$tag, $is_fixed, $compress, $is_split);
+            ($values:expr => @$tag:expr, $options:expr) => {{
+                _require!($cb, $values => @$tag, $options);
             }};
 
-            ($descr:expr, $values:expr => @$tag:expr, $is_fixed:expr, $compress:expr, $is_split:expr) => {{
-                _require!($cb, $descr, $values => @$tag, $is_fixed, $compress, $is_split);
+            ($descr:expr, $values:expr => @$tag:expr, $options:expr) => {{
+                _require!($cb, $descr, $values => @$tag, $options);
             }};
 
-            (@$tag:expr => ($a:expr, $b:expr, $c:expr)) => {{
-                _require!($cb, @$tag => ($a, $b, $c));
+            // Table to build lookup
+
+            (@$tag:expr, $options:expr => ($a:expr)) => {{
+                _require!($cb, @$tag, $options => ($a));
             }};
 
-            (@$tag:expr => $values:expr) => {{
-                _require!($cb, @$tag => $values);
+            (@$tag:expr, $options:expr => ($a:expr, $b:expr)) => {{
+                _require!($cb, @$tag, $options => ($a, $b));
+            }};
+
+            (@$tag:expr, $options:expr => ($a:expr, $b:expr, $c:expr)) => {{
+                _require!($cb, @$tag, $options => ($a, $b, $c));
+            }};
+
+            (@$tag:expr, $options:expr => $values:expr) => {{
+                _require!($cb, @$tag, $options => $values);
             }};
         }
 
