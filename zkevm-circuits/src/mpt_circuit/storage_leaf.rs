@@ -255,11 +255,11 @@ impl<F: Field> StorageLeafConfig<F> {
             }}
 
             // Put the data in the lookup table
-            let proof_type = matchx! {
+            let proof_type = matchx! {(
                 config.is_storage_mod_proof => MPTProofType::StorageChanged.expr(),
                 config.is_non_existing_storage_proof => MPTProofType::StorageDoesNotExist.expr(),
                 _ => MPTProofType::Disabled.expr(),
-            };
+            )};
             let key_rlc = ifx! {config.is_non_existing_storage_proof => {
                 a!(ctx.mpt_table.key_rlc)
             } elsex {

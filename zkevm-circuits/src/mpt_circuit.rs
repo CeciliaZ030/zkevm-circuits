@@ -321,7 +321,7 @@ impl<F: Field> MPTConfig<F> {
                         require!(a!(state_machine.is_start) => true);
                     }};
                     // Main state machine
-                    matchx! {
+                    matchx! {(
                         a!(state_machine.is_start) => {
                             state_machine.step_constraints(meta, &mut cb, StartRowType::Count as usize);
                             cb.base.push_region(MPTRegion::Start as usize);
@@ -351,7 +351,7 @@ impl<F: Field> MPTConfig<F> {
                             cb.base.pop_region();
                         },
                         _ => ctx.memory.build_constraints(&mut cb.base, f!(q_first)),
-                    };
+                    )};
                     // Only account and storage rows can have lookups, disable lookups on all other rows
                     ifx! {not!(a!(state_machine.is_account) + a!(state_machine.is_storage)) => {
                         require!(a!(ctx.mpt_table.proof_type) => MPTProofType::Disabled.expr());
@@ -369,7 +369,7 @@ impl<F: Field> MPTConfig<F> {
         if disable_lookups == 0 {
             cb.base.build_lookups(
                 meta,
-                vec![rlp_cm, state_cm],
+                &[rlp_cm, state_cm],
                 vec![
                     (MptCellType::Lookup(Table::Keccak), &keccak_table),
                     (MptCellType::Lookup(Table::Fixed), &fixed_table),
@@ -377,31 +377,31 @@ impl<F: Field> MPTConfig<F> {
                 ],
             );
             memory.build_lookups(meta);
-            cb.base.build_dynamic_lookups(
+            cb.base.build_lookups(
                 meta,
                 &[vec![FIXED]].concat(),
                 vec![(FIXED, &fixed_table)],
             );
         } else if disable_lookups == 1 {
-            cb.base.build_dynamic_lookups(
+            cb.base.build_lookups(
                 meta,
                 &[vec![KECCAK], ctx.memory.tags()].concat(),
                 vec![(MptCellType::Lookup(Table::Fixed), &fixed_table)],
             );
         } else if disable_lookups == 2 {
-            cb.base.build_dynamic_lookups(
+            cb.base.build_lookups(
                 meta,
                 &ctx.memory.tags(),
                 vec![(MptCellType::Lookup(Table::Fixed), &fixed_table)],
             );
         } else if disable_lookups == 3 {
-            cb.base.build_dynamic_lookups(
+            cb.base.build_lookups(
                 meta,
                 &[FIXED, KECCAK],
                 vec![(MptCellType::Lookup(Table::Fixed), &fixed_table)],
             );
         } else if disable_lookups == 4 {
-            cb.base.build_dynamic_lookups(
+            cb.base.build_lookups(
                 meta,
                 &[KECCAK],
                 vec![(MptCellType::Lookup(Table::Fixed), &fixed_table)],
