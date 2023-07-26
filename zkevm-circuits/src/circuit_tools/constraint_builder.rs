@@ -453,6 +453,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         to_fixed: bool,
         compress: bool,
         reduce: bool,
+        fixed_path: bool,
     ) {
         let values = if compress {
             vec![self.local_compression(description, &values, tag, None, reduce)]
@@ -462,6 +463,9 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
                     self.local_compression(description, &[v.clone()], tag, None, reduce)
                 ).collect()
         };
+        if fixed_path {
+            return;
+        }
         let data = LookupData {
             description,
             regional_condition: 1.expr(),
@@ -1359,8 +1363,8 @@ macro_rules! circuit {
 
             // Lookups build from table
             // only reduce flag is allowed
-            ($values:tt => @$tag:expr, $reduce:expr) => {{
-                _require!($cb, $values => @$tag, $reduce);
+            ($values:tt =>> @$tag:expr, $reduce:expr) => {{
+                _require!($cb, $values =>> @$tag, $reduce);
             }};
             ($values:expr =>> @$tag:expr, $reduce:expr) => {{
                 _require!($cb, $values =>> @$tag, $reduce);
