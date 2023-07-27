@@ -5,7 +5,7 @@ use crate::{
         cell_manager::{Cell, CellManager, CellType},
         constraint_builder::{
             ConstraintBuilder, RLCChainable, RLCChainable2, RLCChainableValue, RLCable,
-            RLCableValue,
+            RLCableValue, COMPRESS, REDUCE, TO_FIX
         },
         gadgets::{IsEqualGadget, IsZeroGadget, LtGadget},
         memory::MemoryBank,
@@ -975,19 +975,20 @@ impl<F: Field> MPTConstraintBuilder<F> {
         is_fixed: bool,
         compress: bool,
         is_split: bool,
+        fixed_path: bool,
     ) {
         self.base
-            .add_lookup(description, tag, values, is_fixed, compress, is_split)
+            .add_lookup(description, tag, values, is_fixed, compress, is_split, fixed_path)
     }
 
-    pub(crate) fn add_celltype_lookup(
-        &mut self,
-        description: &'static str,
-        cell_type: MptCellType,
-        values: Vec<Expression<F>>,
-    ) {
-        self.base.add_celltype_lookup(description, cell_type, values)
-    }
+    // pub(crate) fn add_celltype_lookup(
+    //     &mut self,
+    //     description: &'static str,
+    //     cell_type: MptCellType,
+    //     values: Vec<Expression<F>>,
+    // ) {
+    //     self.base.add_celltype_lookup(description, cell_type, values)
+    // }
 
     pub(crate) fn store_dynamic_table(
         &mut self,
@@ -1115,7 +1116,7 @@ impl<F: Field> DriftedGadget<F> {
                         //let leaf_rlc = (config.drifted_rlp_key.rlc(be_r), mult.expr()).rlc_chain(leaf_no_key_rlc[is_s.idx()].expr());
                         let leaf_rlc = config.drifted_rlp_key.rlc2(&cb.keccak_r).rlc_chain2((leaf_no_key_rlc[is_s.idx()].expr(), leaf_no_key_rlc_mult[is_s.idx()].expr()));
                         // The drifted leaf needs to be stored in the branch at `drifted_index`.
-                        require!((1, leaf_rlc, config.drifted_rlp_key.rlp_list.num_bytes(), parent_data[is_s.idx()].drifted_parent_rlc.expr()) => @KECCAK);
+                        require!((1, leaf_rlc, config.drifted_rlp_key.rlp_list.num_bytes(), parent_data[is_s.idx()].drifted_parent_rlc.expr()) =>> @KECCAK, REDUCE);
                     }
                 }}
             }}
@@ -1297,7 +1298,7 @@ impl<F: Field> MainRLPGadget<F> {
 
             // TODO(Brecht): cleanup inv challenge
             require!(config.mult_inv.expr() * pow::expr(cb.keccak_r.expr(), RLP_UNIT_NUM_BYTES) => config.mult_diff_keccak.expr());
-            require!((FixedTableTag::RMult, config.rlp.num_bytes(), config.mult_diff.expr()) => @FIXED);
+            require!((FixedTableTag::RMult, config.rlp.num_bytes(), config.mult_diff.expr()) => @FIXED, (COMPRESS));
             require!((config.rlp.num_bytes(), config.mult_diff_keccak.expr()) => @MULT);
             // `tag` and `max_len` are "free" input that needs to be constrained externally!
 
@@ -1315,11 +1316,11 @@ impl<F: Field> MainRLPGadget<F> {
                         config.num_bytes.expr() - idx.expr(),
                         config.bytes[idx],
                         config.bytes[idx + 1]
-                    ) => @FIXED, true, true, false);
+                    ) => @FIXED, (TO_FIX, COMPRESS));
                 }
             } else {
                 for (idx, byte) in config.bytes.iter().enumerate() {
-                    require!((config.tag.expr(), config.num_bytes.expr() - idx.expr(), byte.expr()) => @FIXED, true, true, false);
+                    require!((config.tag.expr(), config.num_bytes.expr() - idx.expr(), byte.expr()) => @FIXED, (COMPRESS, REDUCE));
                 }
             }
 

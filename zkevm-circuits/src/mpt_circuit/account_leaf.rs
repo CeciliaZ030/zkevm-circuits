@@ -217,7 +217,7 @@ impl<F: Field> AccountLeafConfig<F> {
                 // Check if the account is in its parent.
                 // Check is skipped for placeholder leaves which are dummy leaves
                 ifx! {not!(and::expr(&[not!(config.parent_data[is_s.idx()].is_placeholder), config.is_placeholder_leaf[is_s.idx()].expr()])) => {
-                    require!((1, leaf_rlc, rlp_key.rlp_list.num_bytes(), config.parent_data[is_s.idx()].rlc) => @KECCAK);
+                    require!((1, leaf_rlc, rlp_key.rlp_list.num_bytes(), config.parent_data[is_s.idx()].rlc) =>> @KECCAK, REDUCE);
                 }}
 
                 // Check the RLP encoding consistency.

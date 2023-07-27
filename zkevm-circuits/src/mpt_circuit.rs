@@ -294,9 +294,9 @@ impl<F: Field> MPTConfig<F> {
         meta.create_gate("MPT", |meta| {
             circuit!([meta, cb], {
                 // Populate lookup tables
-                require!(@KECCAK => <KeccakTable as LookupTable<F>>::advice_columns(&keccak_table).iter().map(|table| a!(table)).collect());
-                require!(@FIXED => fixed_table.iter().map(|table| f!(table)).collect());
-                require!(@MULT => mult_table.iter().map(|table| a!(table)).collect());
+                require!(@KECCAK => (<KeccakTable as LookupTable<F>>::advice_columns(&keccak_table).iter().map(|table| a!(table)).collect::<Vec<_>>()));
+                require!(@FIXED => (fixed_table.iter().map(|table| f!(table)).collect()));
+                require!(@MULT => (mult_table.iter().map(|table| a!(table)).collect()));
 
                 ifx!{f!(q_enable) => {
                     // Mult table
@@ -370,7 +370,12 @@ impl<F: Field> MPTConfig<F> {
             cb.base.build_lookups(
                 meta,
                 &[rlp_cm, state_cm],
-                vec![
+                &[
+                    (MptCellType::Lookup(Table::Keccak), &keccak_table),
+                    (MptCellType::Lookup(Table::Fixed), &fixed_table),
+                    (MptCellType::Lookup(Table::Exp), &mult_table),
+                ],
+                &[
                     (MptCellType::Lookup(Table::Keccak), &keccak_table),
                     (MptCellType::Lookup(Table::Fixed), &fixed_table),
                     (MptCellType::Lookup(Table::Exp), &mult_table),
@@ -379,30 +384,45 @@ impl<F: Field> MPTConfig<F> {
             memory.build_lookups(meta);
             cb.base.build_lookups(
                 meta,
+                &[rlp_cm, state_cm],
                 &[vec![FIXED]].concat(),
                 vec![(FIXED, &fixed_table)],
+                vec![
+                    (MptCellType::Lookup(Table::Keccak), &keccak_table),
+                    (MptCellType::Lookup(Table::Fixed), &fixed_table),
+                    (MptCellType::Lookup(Table::Exp), &mult_table),
+                ],
             );
         } else if disable_lookups == 1 {
             cb.base.build_lookups(
                 meta,
+                &[rlp_cm, state_cm],
                 &[vec![KECCAK], ctx.memory.tags()].concat(),
                 vec![(MptCellType::Lookup(Table::Fixed), &fixed_table)],
+                vec![
+                    (MptCellType::Lookup(Table::Keccak), &keccak_table),
+                    (MptCellType::Lookup(Table::Fixed), &fixed_table),
+                    (MptCellType::Lookup(Table::Exp), &mult_table),
+                ],
             );
         } else if disable_lookups == 2 {
             cb.base.build_lookups(
                 meta,
+                &[rlp_cm, state_cm],
                 &ctx.memory.tags(),
                 vec![(MptCellType::Lookup(Table::Fixed), &fixed_table)],
             );
         } else if disable_lookups == 3 {
             cb.base.build_lookups(
                 meta,
+                &[rlp_cm, state_cm],
                 &[FIXED, KECCAK],
                 vec![(MptCellType::Lookup(Table::Fixed), &fixed_table)],
             );
         } else if disable_lookups == 4 {
             cb.base.build_lookups(
                 meta,
+                &[rlp_cm, state_cm],
                 &[KECCAK],
                 vec![(MptCellType::Lookup(Table::Fixed), &fixed_table)],
             );

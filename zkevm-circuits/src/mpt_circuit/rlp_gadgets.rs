@@ -3,7 +3,7 @@ use crate::{
     circuit_tools::{
         cached_region::CachedRegion,
         cell_manager::Cell,
-        constraint_builder::{ConstraintBuilder, RLCable, RLCableValue},
+        constraint_builder::{ConstraintBuilder, RLCable, RLCableValue, COMPRESS},
     },
     matchw,
     mpt_circuit::{
@@ -83,14 +83,15 @@ impl<F: Field> RLPListGadget<F> {
             let is_very_long = cb.query_cell();
             let is_string = cb.query_cell();
 
-            require!(vec![
-                FixedTableTag::RLP.expr(),
-                bytes[0].expr(),
-                not!(is_string),
-                is_short.expr(),
-                is_long.expr(),
-                is_very_long.expr(),
-                ] => @FIXED
+            require!(
+                (
+                    FixedTableTag::RLP.expr(),
+                    bytes[0].expr(),
+                    not!(is_string),
+                    is_short.expr(),
+                    is_long.expr(),
+                    is_very_long.expr()
+                ) => @FIXED, (COMPRESS)
             );
 
             RLPListGadget {
@@ -344,14 +345,15 @@ impl<F: Field> RLPValueGadget<F> {
             let is_very_long = cb.query_cell();
             let is_list = cb.query_cell();
 
-            require!(vec![
-                FixedTableTag::RLP.expr(),
-                bytes[0].expr(),
-                is_list.expr(),
-                is_short.expr(),
-                is_long.expr(),
-                is_very_long.expr(),
-                ] => @FIXED
+            require!(
+                (
+                    FixedTableTag::RLP.expr(),
+                    bytes[0].expr(),
+                    is_list.expr(),
+                    is_short.expr(),
+                    is_long.expr(),
+                    is_very_long.expr()
+                ) => @FIXED, (COMPRESS)
             );
 
             RLPValueGadget {

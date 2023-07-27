@@ -189,7 +189,7 @@ impl<F: Field> BranchGadget<F> {
                 ifx! {not!(is_placeholder[is_s.idx()]) => {
                     ifx!{or::expr(&[is_root[is_s.idx()].expr(), not!(is_not_hashed)]) => {
                         // Hashed branch hash in parent branch
-                        require!((1, rlc, num_bytes, parent_rlc[is_s.idx()].expr()) => @KECCAK);
+                        require!((1, rlc, num_bytes, parent_rlc[is_s.idx()].expr()) =>> @KECCAK, REDUCE);
                     } elsex {
                         // Non-hashed branch hash in parent branch
                         // TODO(Brecht): restore
