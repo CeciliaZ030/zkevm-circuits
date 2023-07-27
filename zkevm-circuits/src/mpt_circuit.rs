@@ -293,11 +293,6 @@ impl<F: Field> MPTConfig<F> {
         let mut cb = MPTConstraintBuilder::new(5, Some(challenges.clone()), None, r.expr());
         meta.create_gate("MPT", |meta| {
             circuit!([meta, cb], {
-                // Populate lookup tables
-                // require!(@KECCAK => (<KeccakTable as LookupTable<F>>::advice_columns(&keccak_table).iter().map(|table| a!(table)).collect::<Vec<_>>()));
-                // require!(@FIXED => (fixed_table.iter().map(|table| f!(table)).collect()));
-                // require!(@MULT => (mult_table.iter().map(|table| a!(table)).collect()));
-
                 ifx!{f!(q_enable) => {
                     // Mult table
                     ifx! {f!(q_first) => {
