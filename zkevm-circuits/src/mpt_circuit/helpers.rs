@@ -972,23 +972,14 @@ impl<F: Field> MPTConstraintBuilder<F> {
         description: &'static str,
         tag: MptCellType,
         values: Vec<Expression<F>>,
-        is_fixed: bool,
+        to_fixed: bool,
         compress: bool,
-        is_split: bool,
+        reduce: bool,
         fixed_path: bool,
     ) {
         self.base
-            .add_lookup(description, tag, values, is_fixed, compress, is_split, fixed_path)
+            .add_lookup(description, tag, values, to_fixed, compress, reduce, fixed_path)
     }
-
-    // pub(crate) fn add_celltype_lookup(
-    //     &mut self,
-    //     description: &'static str,
-    //     cell_type: MptCellType,
-    //     values: Vec<Expression<F>>,
-    // ) {
-    //     self.base.add_celltype_lookup(description, cell_type, values)
-    // }
 
     pub(crate) fn store_dynamic_table(
         &mut self,
@@ -1316,11 +1307,11 @@ impl<F: Field> MainRLPGadget<F> {
                         config.num_bytes.expr() - idx.expr(),
                         config.bytes[idx],
                         config.bytes[idx + 1]
-                    ) => @FIXED, (TO_FIX, COMPRESS));
+                    ) => @FIXED, (TO_FIX));
                 }
             } else {
                 for (idx, byte) in config.bytes.iter().enumerate() {
-                    require!((config.tag.expr(), config.num_bytes.expr() - idx.expr(), byte.expr()) => @FIXED, (COMPRESS, REDUCE));
+                    require!((config.tag.expr(), config.num_bytes.expr() - idx.expr(), byte.expr()) => @FIXED, (TO_FIX));
                 }
             }
 
