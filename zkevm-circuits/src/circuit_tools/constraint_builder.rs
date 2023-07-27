@@ -2,10 +2,10 @@
 use std::{
     collections::HashMap,
     ops::{Add, Mul},
-    vec,
+    vec, marker::PhantomData,
 };
 
-use crate::{evm_circuit::util::rlc, table::LookupTable, util::Expr};
+use crate::{evm_circuit::util::rlc, table::LookupTable, util::{Expr, query_expression}};
 use eth_types::Field;
 use gadgets::util::{and, sum, Scalar};
 use halo2_proofs::{
@@ -57,35 +57,35 @@ pub struct TableData<F> {
 
 impl<F: Field> TableData<F> {
     fn condition(&self) -> Expression<F> {
-        self.regional_condition * self.local_condition
+        self.regional_condition.expr() * self.local_condition.expr()
     }
 }
 
-struct TabelMerger<F>(Vec<TableData<F>>);
+struct TabelMerger<F, C>{
+    data: Vec<TableData<F>>,
+    _phantom: PhantomData<C>,
+}
 
-impl<F: Field> TabelMerger<F> {
-    fn merge_check<C: CellType>(&self, cb: &mut ConstraintBuilder<F, C>) {
-        let selector = sum::expr(self.0.iter().map(|t| t.condition()));
+impl<F: Field, C: CellType> TabelMerger<F, C> {
+    fn merge_check(&self, cb: &mut ConstraintBuilder<F, C>) {
+        let selector = sum::expr(self.data.iter().map(|t| t.condition()));
         crate::circuit!([meta, cb], {
             require!(selector => bool);
         });
     }
 
-    fn merge_unsafe<C: CellType>(
-        &self,
-        cb: &mut ConstraintBuilder<F, C>,
-    ) -> (Expression<F>, Vec<Expression<F>>) {
-        if self.0.is_empty() {
+    fn merge_unsafe(&self,) -> (Expression<F>, Vec<Expression<F>>) {
+        if self.data.is_empty() {
             return (0.expr(), Vec::new());
         }
-        let selector = sum::expr(self.0.iter().map(|v| v.condition()));
+        let selector = sum::expr(self.data.iter().map(|v| v.condition()));
         // Merge
-        let max_length = self.0.iter().map(|t| t.values.len()).max().unwrap();
+        let max_length = self.data.iter().map(|t| t.values.len()).max().unwrap();
         let mut merged_values = vec![0.expr(); max_length];
         let default_value = 0.expr();
         merged_values.iter_mut().enumerate().for_each(|(idx, v)| {
             *v = sum::expr(
-                self.0
+                self.data
                     .iter()
                     .map(|t| t.condition() * t.values.get(idx).unwrap_or(&default_value).expr()),
             );
@@ -93,20 +93,20 @@ impl<F: Field> TabelMerger<F> {
         (selector, merged_values)
     }
 
-    fn check_and_merge<C: CellType>(
+    fn check_and_merge(
         &self,
         cb: &mut ConstraintBuilder<F, C>,
     ) -> (Expression<F>, Vec<Expression<F>>) {
         self.merge_check(cb);
-        self.merge_unsafe(cb)
+        self.merge_unsafe()
     }
 
-    fn merge_and_select<C: CellType>(
+    fn merge_and_select(
         &self,
         cb: &mut ConstraintBuilder<F, C>,
     ) -> Vec<Expression<F>> {
-        let (selector, v) = self.merge_unsafe(cb);
-        v.iter().map(|v| selector * v.expr()).collect()
+        let (selector, v) = self.merge_unsafe(); 
+        v.iter().map(|v| selector.expr() * v.expr()).collect()
     }
 }
 
@@ -375,40 +375,43 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         meta: &mut ConstraintSystem<F>,
         tables: &[(C, Option<&dyn LookupTable<F>>)],
     ) {
-        let challenge = self.lookup_challenge.clone().unwrap();
+        let lookups = self.lookups.clone();
+        
         for (tag, table) in tables.iter() {
-            if let Some(lookups) = self.lookups.get(tag) {
+            if let Some(lookups) = lookups.get(tag) {
                 for data in lookups.iter() {
-                    meta.lookup_any(data.description, |meta| {
-                        let table = if data.to_fixed {
-                            // (v1, v2, v3) => (t1, t2, t3)
-                            // Direct lookup into the pre-difined fixed tables, vanilla lookup of
-                            // Halo2.
-                            table
-                                .expect(&format!(
-                                    "Fixed table tag {:?} not provided for lookup data",
-                                    tag
-                                ))
-                                .columns()
-                                .iter()
-                                .map(|col| meta.query_any(*col, Rotation(0)))
-                                .collect()
-                        } else {
-                            // (v1, v2, v3) => cond * (t1, t2, t3)
-                            // Applies condition to the advice values stored at configuration time
-                            self.dynamic_table_merged(*tag)
-                        };
-                        // Apply the conditions added from popping regions
-                        let mut values: Vec<_> = data
-                            .values
+                    let table = if data.to_fixed {
+                        // (v1, v2, v3) => (t1, t2, t3)
+                        // Direct lookup into the pre-difined fixed tables, vanilla lookup of
+                        // Halo2.
+                        table
+                            .expect(&format!(
+                                "Fixed table tag {:?} not provided for lookup data",
+                                tag
+                            ))
+                            .columns()
                             .iter()
-                            .map(|value| value.expr() * data.regional_condition.clone())
-                            .collect();
-                        // align the length of values and table
-                        assert!(table.len() >= values.len());
-                        while values.len() < table.len() {
-                            values.push(0.expr());
-                        }
+                            .map(|col| { query_expression(meta, 
+                                |meta| meta.query_any(*col, Rotation(0))
+                            )})
+                            .collect()
+                    } else {
+                        // (v1, v2, v3) => cond * (t1, t2, t3)
+                        // Applies condition to the advice values stored at configuration time
+                        self.dynamic_table_merged(*tag)
+                    };
+                    // Apply the conditions added from popping regions
+                    let mut values: Vec<_> = data
+                        .values
+                        .iter()
+                        .map(|value| value.expr() * data.regional_condition.clone())
+                        .collect();
+                    // align the length of values and table
+                    assert!(table.len() >= values.len());
+                    while values.len() < table.len() {
+                        values.push(0.expr());
+                    }
+                    meta.lookup_any(data.description, |meta| {
                         values
                             .iter()
                             .zip(table.iter())
@@ -508,12 +511,14 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
     }
 
     pub(crate) fn dynamic_table_merged(&mut self, tag: C) -> Vec<Expression<F>> {
-        let table_merger = TabelMerger(
-            self.dynamic_tables
-                .get(&tag)
-                .unwrap_or_else(|| panic!("Dynamic table {:?} not found", tag))
-                .clone(),
-        );
+        let data = self.dynamic_tables
+            .get(&tag)
+            .unwrap_or_else(|| panic!("Dynamic table {:?} not found", tag))
+            .clone();
+        let table_merger = TabelMerger{
+            data,
+            _phantom: PhantomData,
+        };
         table_merger.merge_and_select(self)
     }
 
@@ -1137,8 +1142,8 @@ macro_rules! _require {
             description,
             $tag,
             $values,
-            options.contains(&COMPRESS),
-            options.contains(&REDUCE),
+            $options.contains(&COMPRESS),
+            $options.contains(&REDUCE),
         );
     }};
 }
