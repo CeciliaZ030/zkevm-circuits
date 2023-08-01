@@ -1481,6 +1481,13 @@ macro_rules! circuit {
         }
 
         #[allow(unused_macros)]
+        macro_rules! q {
+            ($column:expr) => {{
+                $meta.query_selector($column.clone())
+            }};
+        }
+
+        #[allow(unused_macros)]
         macro_rules! c {
             ($column:expr) => {{
                 $meta.query_challenge($column.clone())
