@@ -104,6 +104,21 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         }
     }
 
+    pub(crate) fn restart(&mut self) {
+        self.constraints.clear();
+        self.conditions.clear();
+        self.dynamic_lookups.clear();
+        self.dynamic_tables.clear();
+        self.stored_expressions.clear();
+        self.region_id = 0;
+        self.state_context.clear();
+        self.state_constraints_start = 0;
+        self.lookups.clear();
+        if let Some(cell_manager) = &mut self.cell_manager {
+            cell_manager.restart();
+        }
+    }
+
     pub(crate) fn set_cell_manager(&mut self, cell_manager: CellManager<F, C>) {
         self.cell_manager = Some(cell_manager);
     }

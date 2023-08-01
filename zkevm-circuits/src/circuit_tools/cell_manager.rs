@@ -303,6 +303,15 @@ impl<F: Field, C: CellType> CellManager<F, C> {
         }
     }
 
+    pub(crate) fn restart(&mut self) {
+        self.height = self.height_limit;
+        for col in self.columns.iter_mut() {
+            col.height = 0;
+        }
+        self.branch_ctxs.clear();
+        self.parent_ctx = None;
+    }
+
     pub(crate) fn cur_to_parent(&mut self) {
         let new_parent = match self.parent_ctx.clone() {
             // if parent context exists, meaning we are deep in a callstack
