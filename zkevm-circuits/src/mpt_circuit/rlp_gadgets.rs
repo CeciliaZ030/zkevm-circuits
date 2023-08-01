@@ -1,7 +1,7 @@
 use crate::{
     _cb, circuit,
     circuit_tools::{
-        cached_region::{CachedRegion, ChallengeSet},
+        cached_region::CachedRegion,
         cell_manager::Cell,
         constraint_builder::{ConstraintBuilder, RLCable, RLCableValue},
     },
@@ -15,7 +15,7 @@ use crate::{
 };
 use eth_types::Field;
 use gadgets::util::{not, pow, Scalar};
-use halo2_proofs::plonk::{Error, Expression};
+use halo2_proofs::plonk::{Error, Expression, VirtualCells};
 use itertools::Itertools;
 
 use super::{
@@ -103,9 +103,9 @@ impl<F: Field> RLPListGadget<F> {
         })
     }
 
-    pub(crate) fn assign<S: ChallengeSet<F>>(
+    pub(crate) fn assign(
         &self,
-        region: &mut CachedRegion<'_, '_, F, S>,
+        region: &mut CachedRegion<'_, '_, F>,
         offset: usize,
         bytes: &[u8],
     ) -> Result<RLPListWitness, Error> {
@@ -127,9 +127,12 @@ impl<F: Field> RLPListGadget<F> {
         })
     }
 
-    // Single RLP byte, length at most 55 bytes
     pub(crate) fn is_list(&self) -> Expression<F> {
         not::expr(self.is_string.expr())
+    }
+
+    pub(crate) fn is_list_at(&self, meta: &mut VirtualCells<F>, rot: usize) -> Expression<F> {
+        not::expr(self.is_string.rot(meta, rot))
     }
 
     // Single RLP byte, length at most 55 bytes
@@ -140,6 +143,10 @@ impl<F: Field> RLPListGadget<F> {
     // RLP byte followed by the length in 1 byte, followed by the length
     pub(crate) fn is_long(&self) -> Expression<F> {
         self.is_long.expr()
+    }
+
+    pub(crate) fn is_long_at(&self, meta: &mut VirtualCells<F>, rot: usize) -> Expression<F> {
+        self.is_long.rot(meta, rot)
     }
 
     // RLP byte followed by the length in 1 byte, followed by the length
@@ -294,9 +301,9 @@ impl<F: Field> RLPListDataGadget<F> {
         }
     }
 
-    pub(crate) fn assign<S: ChallengeSet<F>>(
+    pub(crate) fn assign(
         &self,
-        region: &mut CachedRegion<'_, '_, F, S>,
+        region: &mut CachedRegion<'_, '_, F>,
         offset: usize,
         list_bytes: &[u8],
     ) -> Result<RLPListWitness, Error> {
@@ -357,9 +364,9 @@ impl<F: Field> RLPValueGadget<F> {
         })
     }
 
-    pub(crate) fn assign<S: ChallengeSet<F>>(
+    pub(crate) fn assign(
         &self,
-        region: &mut CachedRegion<'_, '_, F, S>,
+        region: &mut CachedRegion<'_, '_, F>,
         offset: usize,
         bytes: &[u8],
     ) -> Result<RLPValueWitness, Error> {
@@ -385,6 +392,10 @@ impl<F: Field> RLPValueGadget<F> {
         not::expr(self.is_list.expr())
     }
 
+    pub(crate) fn is_string_at(&self, meta: &mut VirtualCells<F>, rot: usize) -> Expression<F> {
+        not::expr(self.is_list.rot(meta, rot))
+    }
+
     // Single RLP byte containing the byte value
     pub(crate) fn is_short(&self) -> Expression<F> {
         self.is_short.expr()
@@ -393,6 +404,10 @@ impl<F: Field> RLPValueGadget<F> {
     // Single RLP byte containing the length of the value
     pub(crate) fn is_long(&self) -> Expression<F> {
         self.is_long.expr()
+    }
+
+    pub(crate) fn is_long_at(&self, meta: &mut VirtualCells<F>, rot: usize) -> Expression<F> {
+        self.is_long.rot(meta, rot)
     }
 
     // RLP byte containing the lenght of the length,
@@ -668,21 +683,36 @@ impl<F: Field> RLPItemGadget<F> {
         }
     }
 
-    pub(crate) fn assign<S: ChallengeSet<F>>(
+    pub(crate) fn assign(
         &self,
-        region: &mut CachedRegion<'_, '_, F, S>,
+        region: &mut CachedRegion<'_, '_, F>,
         offset: usize,
         bytes: &[u8],
     ) -> Result<RLPItemWitness, Error> {
         let value_witness = self.value.assign(region, offset, bytes)?;
         let list_witness = self.list.assign(region, offset, bytes)?;
         assert!(!(value_witness.is_string() && list_witness.is_list()));
-
         Ok(RLPItemWitness {
             value: value_witness,
             list: list_witness,
             bytes: bytes.to_vec(),
         })
+    }
+
+    pub(crate) fn is_string(&self) -> Expression<F> {
+        self.value.is_string()
+    }
+
+    pub(crate) fn is_string_at(&self, meta: &mut VirtualCells<F>, rot: usize) -> Expression<F> {
+        self.value.is_string_at(meta, rot)
+    }
+
+    pub(crate) fn is_list(&self) -> Expression<F> {
+        self.list.is_list()
+    }
+
+    pub(crate) fn is_list_at(&self, meta: &mut VirtualCells<F>, rot: usize) -> Expression<F> {
+        self.list.is_list_at(meta, rot)
     }
 
     // Single RLP byte containing the byte value
@@ -701,6 +731,16 @@ impl<F: Field> RLPItemGadget<F> {
             matchx! {
                 self.value.is_string() => self.value.is_long(),
                 self.list.is_list() => self.list.is_long(),
+            }
+        })
+    }
+
+    // Single RLP byte containing the length of the value
+    pub(crate) fn is_long_at(&self, meta: &mut VirtualCells<F>, rot: usize) -> Expression<F> {
+        circuit!([meta, _cb!()], {
+            matchx! {
+                self.value.is_string() => self.value.is_long_at(meta, rot),
+                self.list.is_list() => self.list.is_long_at(meta, rot),
             }
         })
     }
@@ -749,8 +789,8 @@ impl<F: Field> RLPItemGadget<F> {
     pub(crate) fn rlc_rlp(&self, cb: &mut MPTConstraintBuilder<F>) -> Expression<F> {
         circuit!([meta, cb], {
             matchx! {
-                self.value.is_string() => self.value.rlc_rlp(&cb.be_r),
-                self.list.is_list() => self.list.rlc_rlp(&cb.be_r),
+                self.value.is_string() => self.value.rlc_rlp(&cb.keccak_r),
+                self.list.is_list() => self.list.rlc_rlp(&cb.keccak_r),
             }
         })
     }
@@ -758,8 +798,8 @@ impl<F: Field> RLPItemGadget<F> {
     pub(crate) fn rlc_rlp2(&self, cb: &mut MPTConstraintBuilder<F>) -> Expression<F> {
         circuit!([meta, cb], {
             matchx! {
-                self.value.is_string() => self.value.rlc_rlp2(&cb.be_r),
-                self.list.is_list() => self.list.rlc_rlp2(&cb.be_r),
+                self.value.is_string() => self.value.rlc_rlp2(&cb.keccak_r),
+                self.list.is_list() => self.list.rlc_rlp2(&cb.keccak_r),
             }
         })
     }
@@ -799,6 +839,14 @@ impl RLPItemWitness {
             self.value.is_string() => self.value.len(),
             self.list.is_list() => self.list.len(),
         }
+    }
+
+    pub(crate) fn is_string(&self) -> bool {
+        self.value.is_string()
+    }
+
+    pub(crate) fn is_list(&self) -> bool {
+        self.list.is_list()
     }
 
     pub(crate) fn is_short(&self) -> bool {

@@ -6,7 +6,7 @@ use halo2_proofs::plonk::{Error, Expression};
 use crate::evm_circuit::util::{from_bytes, pow_of_two};
 
 use super::{
-    cached_region::{CachedRegion, ChallengeSet},
+    cached_region::CachedRegion,
     cell_manager::{Cell, CellType},
     constraint_builder::ConstraintBuilder,
 };
@@ -43,9 +43,9 @@ impl<F: Field> IsZeroGadget<F> {
         self.is_zero.as_ref().unwrap().clone()
     }
 
-    pub(crate) fn assign<S: ChallengeSet<F>>(
+    pub(crate) fn assign(
         &self,
-        region: &mut CachedRegion<'_, '_, F, S>,
+        region: &mut CachedRegion<'_, '_, F>,
         offset: usize,
         value: F,
     ) -> Result<F, Error> {
@@ -83,9 +83,9 @@ impl<F: Field> IsEqualGadget<F> {
         self.is_zero.expr()
     }
 
-    pub(crate) fn assign<S: ChallengeSet<F>>(
+    pub(crate) fn assign(
         &self,
-        region: &mut CachedRegion<'_, '_, F, S>,
+        region: &mut CachedRegion<'_, '_, F>,
         offset: usize,
         lhs: F,
         rhs: F,
@@ -139,9 +139,9 @@ impl<F: Field, const N_BYTES: usize> LtGadget<F, N_BYTES> {
         self.lt.as_ref().unwrap().expr()
     }
 
-    pub(crate) fn assign<S: ChallengeSet<F>>(
+    pub(crate) fn assign(
         &self,
-        region: &mut CachedRegion<'_, '_, F, S>,
+        region: &mut CachedRegion<'_, '_, F>,
         offset: usize,
         lhs: F,
         rhs: F,
@@ -152,7 +152,6 @@ impl<F: Field, const N_BYTES: usize> LtGadget<F, N_BYTES> {
             .as_ref()
             .unwrap()
             .assign(region, offset, if lt { F::ONE } else { F::ZERO })?;
-
         // Set the bytes of diff
         let diff = (lhs - rhs) + (if lt { self.range } else { F::ZERO });
         let diff_bytes = diff.to_repr();

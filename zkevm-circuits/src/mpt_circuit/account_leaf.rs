@@ -8,14 +8,13 @@ use halo2_proofs::{
 
 use super::{
     helpers::{KeyDataWitness, ListKeyGadget, MainData, ParentDataWitness},
-    param::HASH_WIDTH,
     rlp_gadgets::RLPItemWitness,
     witness_row::{AccountRowType, Node},
 };
 use crate::{
     circuit,
     circuit_tools::{
-        cached_region::{CachedRegion, ChallengeSet},
+        cached_region::CachedRegion,
         cell_manager::Cell,
         constraint_builder::{RLCChainable2, RLCable, RLCableValue},
         gadgets::IsEqualGadget,
@@ -26,7 +25,7 @@ use crate::{
             IsEmptyTreeGadget, KeyData, MPTConstraintBuilder, ParentData, WrongGadget, KECCAK,
         },
         param::{KEY_LEN_IN_NIBBLES, RLP_LIST_LONG, RLP_LONG},
-        MPTConfig, MPTContext, MPTState,
+        MPTConfig, MPTContext, MPTState, RlpItemType,
     },
     table::MPTProofType,
     witness::MptUpdateRow,
@@ -40,7 +39,7 @@ pub(crate) struct AccountLeafConfig<F> {
     rlp_key: [ListKeyGadget<F>; 2],
     value_rlp_bytes: [[Cell<F>; 2]; 2],
     value_list_rlp_bytes: [[Cell<F>; 2]; 2],
-    is_in_empty_trie: [IsEmptyTreeGadget<F>; 2],
+    is_placeholder_leaf: [IsEmptyTreeGadget<F>; 2],
     drifted: DriftedGadget<F>,
     wrong: WrongGadget<F>,
     is_non_existing_account_proof: IsEqualGadget<F>,
@@ -55,7 +54,7 @@ impl<F: Field> AccountLeafConfig<F> {
     pub fn configure(
         meta: &mut VirtualCells<'_, F>,
         cb: &mut MPTConstraintBuilder<F>,
-        ctx: MPTContext<F>,
+        ctx: &mut MPTContext<F>,
     ) -> Self {
         cb.base
             .cell_manager
@@ -66,32 +65,74 @@ impl<F: Field> AccountLeafConfig<F> {
 
         circuit!([meta, cb], {
             let key_items = [
-                ctx.rlp_item(meta, cb, AccountRowType::KeyS as usize),
-                ctx.rlp_item(meta, cb, AccountRowType::KeyC as usize),
+                ctx.rlp_item(meta, cb, AccountRowType::KeyS as usize, RlpItemType::Key),
+                ctx.rlp_item(meta, cb, AccountRowType::KeyC as usize, RlpItemType::Key),
             ];
             config.value_rlp_bytes = [cb.query_bytes(), cb.query_bytes()];
             config.value_list_rlp_bytes = [cb.query_bytes(), cb.query_bytes()];
             let nonce_items = [
-                ctx.rlp_item(meta, cb, AccountRowType::NonceS as usize),
-                ctx.rlp_item(meta, cb, AccountRowType::NonceC as usize),
+                ctx.rlp_item(
+                    meta,
+                    cb,
+                    AccountRowType::NonceS as usize,
+                    RlpItemType::Value,
+                ),
+                ctx.rlp_item(
+                    meta,
+                    cb,
+                    AccountRowType::NonceC as usize,
+                    RlpItemType::Value,
+                ),
             ];
             let balance_items = [
-                ctx.rlp_item(meta, cb, AccountRowType::BalanceS as usize),
-                ctx.rlp_item(meta, cb, AccountRowType::BalanceC as usize),
+                ctx.rlp_item(
+                    meta,
+                    cb,
+                    AccountRowType::BalanceS as usize,
+                    RlpItemType::Value,
+                ),
+                ctx.rlp_item(
+                    meta,
+                    cb,
+                    AccountRowType::BalanceC as usize,
+                    RlpItemType::Value,
+                ),
             ];
             let storage_items = [
-                ctx.rlp_item(meta, cb, AccountRowType::StorageS as usize),
-                ctx.rlp_item(meta, cb, AccountRowType::StorageC as usize),
+                ctx.rlp_item(
+                    meta,
+                    cb,
+                    AccountRowType::StorageS as usize,
+                    RlpItemType::Hash,
+                ),
+                ctx.rlp_item(
+                    meta,
+                    cb,
+                    AccountRowType::StorageC as usize,
+                    RlpItemType::Hash,
+                ),
             ];
             let codehash_items = [
-                ctx.rlp_item(meta, cb, AccountRowType::CodehashS as usize),
-                ctx.rlp_item(meta, cb, AccountRowType::CodehashC as usize),
+                ctx.rlp_item(
+                    meta,
+                    cb,
+                    AccountRowType::CodehashS as usize,
+                    RlpItemType::Hash,
+                ),
+                ctx.rlp_item(
+                    meta,
+                    cb,
+                    AccountRowType::CodehashC as usize,
+                    RlpItemType::Hash,
+                ),
             ];
-            let drifted_bytes = ctx.rlp_item(meta, cb, AccountRowType::Drifted as usize);
-            let wrong_bytes = ctx.rlp_item(meta, cb, AccountRowType::Wrong as usize);
+            let drifted_bytes =
+                ctx.rlp_item(meta, cb, AccountRowType::Drifted as usize, RlpItemType::Key);
+            let wrong_bytes =
+                ctx.rlp_item(meta, cb, AccountRowType::Wrong as usize, RlpItemType::Key);
 
             config.main_data =
-                MainData::load("main storage", cb, &ctx.memory[main_memory()], 0.expr());
+                MainData::load("main storage", cb, &mut ctx.memory[main_memory()], 0.expr());
 
             // Don't allow an account node to follow an account node
             require!(config.main_data.is_below_account => false);
@@ -103,31 +144,28 @@ impl<F: Field> AccountLeafConfig<F> {
             let mut codehash_rlc = vec![0.expr(); 2];
             let mut leaf_no_key_rlc = vec![0.expr(); 2];
             let mut leaf_no_key_rlc_mult = vec![0.expr(); 2];
+            let mut value_list_num_bytes = vec![0.expr(); 2];
             for is_s in [true, false] {
                 // Key data
                 let key_data = &mut config.key_data[is_s.idx()];
-                *key_data = KeyData::load(cb, &ctx.memory[key_memory(is_s)], 0.expr());
+                *key_data = KeyData::load(cb, &mut ctx.memory[key_memory(is_s)], 0.expr());
 
                 // Parent data
                 let parent_data = &mut config.parent_data[is_s.idx()];
                 *parent_data = ParentData::load(
                     "account load",
                     cb,
-                    &ctx.memory[parent_memory(is_s)],
+                    &mut ctx.memory[parent_memory(is_s)],
                     0.expr(),
                 );
 
                 // Placeholder leaf checks
-                config.is_in_empty_trie[is_s.idx()] =
-                    IsEmptyTreeGadget::construct(cb, parent_data.rlc.expr(), &cb.le_r.expr());
+                config.is_placeholder_leaf[is_s.idx()] =
+                    IsEmptyTreeGadget::construct(cb, parent_data.rlc.expr(), &cb.r.expr());
 
                 // Calculate the key RLC
                 let rlp_key = &mut config.rlp_key[is_s.idx()];
                 *rlp_key = ListKeyGadget::construct(cb, &key_items[is_s.idx()]);
-
-                // Storage root and codehash are always 32-byte hashes.
-                require!(storage_items[is_s.idx()].len() => HASH_WIDTH);
-                require!(codehash_items[is_s.idx()].len() => HASH_WIDTH);
 
                 let nonce_rlp_rlc;
                 let balance_rlp_rlc;
@@ -139,13 +177,13 @@ impl<F: Field> AccountLeafConfig<F> {
                 (codehash_rlc[is_s.idx()], codehash_rlp_rlc) = codehash_items[is_s.idx()].rlc2();
 
                 // Calculate the leaf RLC
-                let keccak_r = &cb.be_r;
+                let keccak_r = &cb.keccak_r;
                 let value_rlp_bytes = config.value_rlp_bytes[is_s.idx()].to_expr_vec();
                 let value_list_rlp_bytes = config.value_list_rlp_bytes[is_s.idx()].to_expr_vec();
                 leaf_no_key_rlc[is_s.idx()] = value_rlp_bytes
-                    .rlc_rev(&keccak_r)
+                    .rlc_rev(keccak_r)
                     .rlc_chain2((
-                        value_list_rlp_bytes.rlc_rev(&keccak_r),
+                        value_list_rlp_bytes.rlc_rev(keccak_r),
                         pow::expr(keccak_r.expr(), 2),
                     ))
                     .rlc_chain2(nonce_rlp_rlc.clone())
@@ -157,7 +195,7 @@ impl<F: Field> AccountLeafConfig<F> {
                     * balance_rlp_rlc.1
                     * storage_rlp_rlc.1
                     * codehash_rlp_rlc.1;
-                let leaf_rlc = rlp_key.rlc2(&cb.be_r).rlc_chain2((
+                let leaf_rlc = rlp_key.rlc2(&cb.keccak_r).rlc_chain2((
                     leaf_no_key_rlc[is_s.idx()].expr(),
                     leaf_no_key_rlc_mult[is_s.idx()].expr(),
                 ));
@@ -169,7 +207,7 @@ impl<F: Field> AccountLeafConfig<F> {
                         rlp_key.key_value.clone(),
                         key_data.mult.expr(),
                         key_data.is_odd.expr(),
-                        &cb.le_r.expr(),
+                        &cb.r.expr(),
                     );
                 // Total number of nibbles needs to be KEY_LEN_IN_NIBBLES.
                 let num_nibbles =
@@ -178,7 +216,7 @@ impl<F: Field> AccountLeafConfig<F> {
 
                 // Check if the account is in its parent.
                 // Check is skipped for placeholder leaves which are dummy leaves
-                ifx! {not!(and::expr(&[not!(config.parent_data[is_s.idx()].is_placeholder), config.is_in_empty_trie[is_s.idx()].expr()])) => {
+                ifx! {not!(and::expr(&[not!(config.parent_data[is_s.idx()].is_placeholder), config.is_placeholder_leaf[is_s.idx()].expr()])) => {
                     require!((1, leaf_rlc, rlp_key.rlp_list.num_bytes(), config.parent_data[is_s.idx()].rlc) => @KECCAK);
                 }}
 
@@ -194,38 +232,23 @@ impl<F: Field> AccountLeafConfig<F> {
                 require!(value_list_rlp_bytes[1] => nonce_items[is_s.idx()].num_bytes() + balance_items[is_s.idx()].num_bytes() + (2 * (1 + 32)).expr());
                 // Now check that the the key and value list length matches the account length.
                 // The RLP encoded string always has 2 RLP bytes.
-                let value_list_num_bytes = value_rlp_bytes[1].expr() + 2.expr();
+                value_list_num_bytes[is_s.idx()] = value_rlp_bytes[1].expr() + 2.expr();
+
                 // Account length needs to equal all key bytes and all values list bytes.
-                require!(config.rlp_key[is_s.idx()].rlp_list.len() => config.rlp_key[is_s.idx()].key_value.num_bytes() + value_list_num_bytes);
+                require!(config.rlp_key[is_s.idx()].rlp_list.len() => config.rlp_key[is_s.idx()].key_value.num_bytes() + value_list_num_bytes[is_s.idx()].expr());
 
                 // Key done, set the starting values
-                KeyData::store_defaults(cb, &ctx.memory[key_memory(is_s)]);
+                KeyData::store_defaults(cb, &mut ctx.memory[key_memory(is_s)]);
                 // Store the new parent
                 ParentData::store(
                     cb,
-                    &ctx.memory[parent_memory(is_s)],
+                    &mut ctx.memory[parent_memory(is_s)],
                     storage_rlc[is_s.idx()].expr(),
                     true.expr(),
                     false.expr(),
                     storage_rlc[is_s.idx()].expr(),
                 );
             }
-
-            // Anything following this node is below the account
-            // TODO(Brecht): For non-existing accounts it should be impossible to prove
-            // storage leaves unless it's also a non-existing proof?
-            MainData::store(
-                cb,
-                &ctx.memory[main_memory()],
-                [
-                    config.main_data.proof_type.expr(),
-                    true.expr(),
-                    key_rlc[true.idx()].expr(),
-                    config.main_data.root_prev.expr(),
-                    config.main_data.root.expr(),
-                ],
-            );
-
             // Proof types
             config.is_non_existing_account_proof = IsEqualGadget::construct(
                 &mut cb.base,
@@ -255,19 +278,20 @@ impl<F: Field> AccountLeafConfig<F> {
             config.is_codehash_mod = IsEqualGadget::construct(
                 &mut cb.base,
                 config.main_data.proof_type.expr(),
-                MPTProofType::CodeHashExists.expr(),
+                MPTProofType::CodeHashChanged.expr(),
             );
 
             // Drifted leaf handling
             config.drifted = DriftedGadget::construct(
                 cb,
+                &value_list_num_bytes,
                 &config.parent_data,
                 &config.key_data,
                 &key_rlc,
                 &leaf_no_key_rlc,
                 &leaf_no_key_rlc_mult,
                 &drifted_bytes,
-                &cb.le_r.expr(),
+                &cb.r.expr(),
             );
 
             // Wrong leaf handling
@@ -278,9 +302,26 @@ impl<F: Field> AccountLeafConfig<F> {
                 &config.rlp_key[true.idx()].key_value,
                 &key_rlc[true.idx()],
                 &wrong_bytes,
-                config.is_in_empty_trie[true.idx()].expr(),
+                config.is_placeholder_leaf[true.idx()].expr(),
                 config.key_data[true.idx()].clone(),
-                &cb.le_r.expr(),
+                &cb.r.expr(),
+            );
+            let is_non_existing_account = not::expr(config.wrong.is_key_equal.clone().expr());
+
+            // Anything following this node is below the account
+            // TODO(Brecht): For non-existing accounts it should be impossible to prove
+            // storage leaves unless it's also a non-existing proof?
+            MainData::store(
+                cb,
+                &mut ctx.memory[main_memory()],
+                [
+                    config.main_data.proof_type.expr(),
+                    true.expr(),
+                    is_non_existing_account.expr(),
+                    key_rlc[true.idx()].expr(),
+                    config.main_data.root_prev.expr(),
+                    config.main_data.root.expr(),
+                ],
             );
 
             ifx! {config.is_account_delete_mod => {
@@ -294,7 +335,7 @@ impl<F: Field> AccountLeafConfig<F> {
                 // have a branch placeholder.
                 // TODO(Brecht): For case 2: just having the parent branch be the placeholder seems not enough
                 require!(or::expr([
-                    config.is_in_empty_trie[false.idx()].expr(),
+                    config.is_placeholder_leaf[false.idx()].expr(),
                     config.parent_data[false.idx()].is_placeholder.expr()
                 ]) => true);
             } elsex {
@@ -327,7 +368,7 @@ impl<F: Field> AccountLeafConfig<F> {
                 config.is_nonce_mod => (MPTProofType::NonceChanged.expr(), nonce_rlc[true.idx()].expr(), nonce_rlc[false.idx()].expr()),
                 config.is_balance_mod => (MPTProofType::BalanceChanged.expr(), balance_rlc[true.idx()].expr(), balance_rlc[false.idx()].expr()),
                 config.is_storage_mod => (MPTProofType::StorageChanged.expr(), storage_rlc[true.idx()].expr(), storage_rlc[false.idx()].expr()),
-                config.is_codehash_mod => (MPTProofType::CodeHashExists.expr(), codehash_rlc[true.idx()].expr(), codehash_rlc[false.idx()].expr()),
+                config.is_codehash_mod => (MPTProofType::CodeHashChanged.expr(), codehash_rlc[true.idx()].expr(), codehash_rlc[false.idx()].expr()),
                 config.is_account_delete_mod => (MPTProofType::AccountDestructed.expr(), 0.expr(), 0.expr()),
                 config.is_non_existing_account_proof => (MPTProofType::AccountDoesNotExist.expr(), 0.expr(), 0.expr()),
                 _ => (MPTProofType::Disabled.expr(), 0.expr(), 0.expr()),
@@ -358,9 +399,9 @@ impl<F: Field> AccountLeafConfig<F> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn assign<S: ChallengeSet<F>>(
+    pub fn assign(
         &self,
-        region: &mut CachedRegion<'_, '_, F, S>,
+        region: &mut CachedRegion<'_, '_, F>,
         mpt_config: &MPTConfig<F>,
         pv: &mut MPTState<F>,
         offset: usize,
@@ -390,11 +431,11 @@ impl<F: Field> AccountLeafConfig<F> {
             rlp_values[AccountRowType::CodehashC as usize].clone(),
         ];
         let drifted_item = rlp_values[AccountRowType::Drifted as usize].clone();
-        let wrong_item = rlp_values[AccountRowType::Wrong as usize].clone();
+        let expected_item = rlp_values[AccountRowType::Wrong as usize].clone();
 
         let main_data =
             self.main_data
-                .witness_load(region, offset, &pv.memory[main_memory()], 0)?;
+                .witness_load(region, offset, &mut pv.memory[main_memory()], 0)?;
 
         // Key
         let mut key_rlc = vec![0.scalar(); 2];
@@ -422,22 +463,22 @@ impl<F: Field> AccountLeafConfig<F> {
             key_data[is_s.idx()] = self.key_data[is_s.idx()].witness_load(
                 region,
                 offset,
-                &pv.memory[key_memory(is_s)],
+                &mut pv.memory[key_memory(is_s)],
                 0,
             )?;
 
             parent_data[is_s.idx()] = self.parent_data[is_s.idx()].witness_load(
                 region,
                 offset,
-                &pv.memory[parent_memory(is_s)],
+                &mut pv.memory[parent_memory(is_s)],
                 0,
             )?;
 
-            self.is_in_empty_trie[is_s.idx()].assign(
+            self.is_placeholder_leaf[is_s.idx()].assign(
                 region,
                 offset,
                 parent_data[is_s.idx()].rlc,
-                region.le_r,
+                region.r,
             )?;
 
             let rlp_key_witness = self.rlp_key[is_s.idx()].assign(
@@ -447,17 +488,17 @@ impl<F: Field> AccountLeafConfig<F> {
                 &key_items[is_s.idx()],
             )?;
 
-            nonce_rlc[is_s.idx()] = nonce_items[is_s.idx()].rlc_content(region.le_r);
-            balance_rlc[is_s.idx()] = balance_items[is_s.idx()].rlc_content(region.le_r);
-            storage_rlc[is_s.idx()] = storage_items[is_s.idx()].rlc_content(region.le_r);
-            codehash_rlc[is_s.idx()] = codehash_items[is_s.idx()].rlc_content(region.le_r);
+            nonce_rlc[is_s.idx()] = nonce_items[is_s.idx()].rlc_content(region.r);
+            balance_rlc[is_s.idx()] = balance_items[is_s.idx()].rlc_content(region.r);
+            storage_rlc[is_s.idx()] = storage_items[is_s.idx()].rlc_content(region.r);
+            codehash_rlc[is_s.idx()] = codehash_items[is_s.idx()].rlc_content(region.r);
 
             // Key
             (key_rlc[is_s.idx()], _) = rlp_key_witness.key.key(
                 rlp_key_witness.key_item.clone(),
                 key_data[is_s.idx()].rlc,
                 key_data[is_s.idx()].mult,
-                region.le_r,
+                region.r,
             );
 
             // Update key and parent state
@@ -482,18 +523,6 @@ impl<F: Field> AccountLeafConfig<F> {
                 storage_rlc[is_s.idx()],
             )?;
         }
-
-        // Anything following this node is below the account
-        MainData::witness_store(
-            region,
-            offset,
-            &mut pv.memory[main_memory()],
-            main_data.proof_type,
-            true,
-            account.address.rlc_value(region.le_r),
-            main_data.root_prev,
-            main_data.root,
-        )?;
 
         // Proof types
         let is_non_existing_proof = self.is_non_existing_account_proof.assign(
@@ -530,9 +559,8 @@ impl<F: Field> AccountLeafConfig<F> {
             region,
             offset,
             main_data.proof_type.scalar(),
-            MPTProofType::CodeHashExists.scalar(),
+            MPTProofType::CodeHashChanged.scalar(),
         )? == true.scalar();
-
         // Drifted leaf handling
         self.drifted.assign(
             region,
@@ -540,20 +568,33 @@ impl<F: Field> AccountLeafConfig<F> {
             &parent_data,
             &account.drifted_rlp_bytes,
             &drifted_item,
-            region.le_r,
+            region.r,
         )?;
 
         // Wrong leaf handling
-        self.wrong.assign(
+        let (_, is_non_existing_account) = self.wrong.assign(
             region,
             offset,
             is_non_existing_proof,
             &key_rlc,
             &account.wrong_rlp_bytes,
-            &wrong_item,
+            &expected_item,
             true,
             key_data[true.idx()].clone(),
-            region.le_r,
+            region.r,
+        )?;
+
+        // Anything following this node is below the account
+        MainData::witness_store(
+            region,
+            offset,
+            &mut pv.memory[main_memory()],
+            main_data.proof_type,
+            true,
+            is_non_existing_account,
+            account.address.rlc_value(region.r),
+            main_data.root_prev,
+            main_data.root,
         )?;
 
         // Put the data in the lookup table
@@ -564,7 +605,7 @@ impl<F: Field> AccountLeafConfig<F> {
         } else if is_storage_mod {
             (MPTProofType::StorageChanged, storage_rlc)
         } else if is_codehash_mod {
-            (MPTProofType::CodeHashExists, codehash_rlc)
+            (MPTProofType::CodeHashChanged, codehash_rlc)
         } else if is_account_delete_mod {
             (MPTProofType::AccountDestructed, vec![0.scalar(); 2])
         } else if is_non_existing_proof {
@@ -576,7 +617,7 @@ impl<F: Field> AccountLeafConfig<F> {
             region,
             offset,
             &MptUpdateRow {
-                address_rlc: Value::known(account.address.rlc_value(region.le_r)),
+                address_rlc: Value::known(account.address.rlc_value(region.r)),
                 proof_type: Value::known(proof_type.scalar()),
                 key_rlc: Value::known(0.scalar()),
                 value_prev: Value::known(value[true.idx()]),

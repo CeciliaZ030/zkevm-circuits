@@ -2,14 +2,13 @@ use super::*;
 use crate::{
     circuit,
     circuit_tools::{
-        cached_region::{CachedRegion, ChallengeSet},
-        cell_manager::CellType,
-        constraint_builder::ConstraintBuilder,
+        cached_region::CachedRegion, cell_manager::CellType, constraint_builder::ConstraintBuilder,
     },
 };
+use serde::{Deserialize, Serialize};
 
 /// The types of proofs in the MPT table
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum MPTProofType {
     /// Disabled
     Disabled,
@@ -17,8 +16,8 @@ pub enum MPTProofType {
     NonceChanged = AccountFieldTag::Nonce as isize,
     /// Balance updated
     BalanceChanged = AccountFieldTag::Balance as isize,
-    /// Code hash exists
-    CodeHashExists = AccountFieldTag::CodeHash as isize,
+    /// Code hash updated
+    CodeHashChanged = AccountFieldTag::CodeHash as isize,
     /// Account destroyed
     AccountDestructed,
     /// Account does not exist
@@ -35,7 +34,7 @@ impl From<AccountFieldTag> for MPTProofType {
         match tag {
             AccountFieldTag::Nonce => Self::NonceChanged,
             AccountFieldTag::Balance => Self::BalanceChanged,
-            AccountFieldTag::CodeHash => Self::CodeHashExists,
+            AccountFieldTag::CodeHash => Self::CodeHashChanged,
             AccountFieldTag::NonExisting => Self::AccountDoesNotExist,
         }
     }
@@ -144,9 +143,9 @@ impl MptTable {
         Ok(())
     }
 
-    pub(crate) fn assign_cached<F: Field, S: ChallengeSet<F>>(
+    pub(crate) fn assign_cached<F: Field>(
         &self,
-        region: &mut CachedRegion<'_, '_, F, S>,
+        region: &mut CachedRegion<'_, '_, F>,
         offset: usize,
         row: &MptUpdateRow<Value<F>>,
     ) -> Result<(), Error> {

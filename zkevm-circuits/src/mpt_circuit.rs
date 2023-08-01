@@ -13,7 +13,6 @@ use halo2_proofs::{
     poly::Rotation,
 };
 
-use itertools::Itertools;
 use std::{convert::TryInto, env::var};
 
 mod account_leaf;
@@ -25,23 +24,26 @@ mod param;
 mod rlp_gadgets;
 mod start;
 mod storage_leaf;
-mod witness_row;
+/// MPT witness row
+pub mod witness_row;
 
 use self::{
     account_leaf::AccountLeafConfig,
-    helpers::{key_memory, RLPItemView},
+    helpers::RLPItemView,
+    param::RLP_UNIT_NUM_BYTES,
     rlp_gadgets::decode_rlp,
-    witness_row::{AccountRowType, ExtensionBranchRowType, Node, StartRowType, StorageRowType},
+    witness_row::{
+        AccountRowType, ExtensionBranchRowType, Node, StartRowType, StorageRowType,
+        NODE_RLP_TYPES_ACCOUNT, NODE_RLP_TYPES_BRANCH, NODE_RLP_TYPES_START,
+        NODE_RLP_TYPES_STORAGE,
+    },
 };
 use crate::{
     assign, assignf, circuit,
     circuit_tools::{cached_region::CachedRegion, cell_manager::CellManager, memory::Memory},
     evm_circuit::table::Table,
     mpt_circuit::{
-        helpers::{
-            main_memory, parent_memory, MPTConstraintBuilder, MainRLPGadget, MptCellType, FIXED,
-            KECCAK, PHASE_TWO,
-        },
+        helpers::{MPTConstraintBuilder, MainRLPGadget, MptCellType, FIXED, KECCAK, MULT},
         start::StartConfig,
         storage_leaf::StorageLeafConfig,
     },
@@ -132,40 +134,47 @@ pub struct MPTContext<F> {
     pub(crate) memory: Memory<F, MptCellType>,
 }
 
+/// RLP item type
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum RlpItemType {
+    /// Node (string with len == 0 or 32, OR list with len <= 31)
+    Node,
+    /// Value (string with len <= 32)
+    Value,
+    /// Hash (string with len == 32)
+    Hash,
+    /// Key (string with len <= 33)
+    Key,
+    /// Nibbles
+    Nibbles,
+}
+
 impl<F: Field> MPTContext<F> {
     pub(crate) fn rlp_item(
         &self,
         meta: &mut VirtualCells<F>,
         cb: &mut MPTConstraintBuilder<F>,
         idx: usize,
+        item_type: RlpItemType,
     ) -> RLPItemView<F> {
-        // TODO(Brecht): Add RLP limitations like max num bytes
-        self.rlp_item.create_view(meta, cb, idx, false)
-    }
-
-    pub(crate) fn nibbles(
-        &self,
-        meta: &mut VirtualCells<F>,
-        cb: &mut MPTConstraintBuilder<F>,
-        idx: usize,
-    ) -> RLPItemView<F> {
-        self.rlp_item.create_view(meta, cb, idx, true)
+        self.rlp_item.create_view(meta, cb, idx, item_type)
     }
 }
 
 /// Merkle Patricia Trie config.
 #[derive(Clone)]
 pub struct MPTConfig<F> {
-    pub(crate) mpt_table: MptTable,
     pub(crate) q_enable: Column<Fixed>,
     pub(crate) q_first: Column<Fixed>,
     pub(crate) q_last: Column<Fixed>,
     pub(crate) memory: Memory<F, MptCellType>,
+    pub(crate) mpt_table: MptTable,
     keccak_table: KeccakTable,
     fixed_table: [Column<Fixed>; 6],
-    phase_two_table: [Column<Advice>; 3],
+    mult_table: [Column<Advice>; 2],
     rlp_item: MainRLPGadget<F>,
     state_machine: StateMachineConfig<F>,
+    params: MPTCircuitParams,
     cb: MPTConstraintBuilder<F>,
 }
 
@@ -187,20 +196,9 @@ pub enum FixedTableTag {
     /// RLP decoding
     RLP,
     /// TEMP
-    LERMult,
+    RMult,
 }
-
 impl_expr!(FixedTableTag);
-
-/// Enumerator to determine the type of row in the fixed table.
-#[derive(Clone, Copy, Debug)]
-pub enum PhaseTwoTableTag {
-    /// Multiplier for keccak challenge
-    BERMult,
-    // reserve for more phase two lookups...
-}
-
-impl_expr!(PhaseTwoTableTag);
 
 #[derive(Default)]
 pub(crate) struct MPTState<F> {
@@ -217,10 +215,11 @@ impl<F: Field> MPTState<F> {
 
 impl<F: Field> MPTConfig<F> {
     /// Configure MPT Circuit
-    pub fn configure(
+    pub fn new(
         meta: &mut ConstraintSystem<F>,
         challenges: Challenges<Expression<F>>,
         keccak_table: KeccakTable,
+        params: MPTCircuitParams,
     ) -> Self {
         let q_enable = meta.fixed_column();
         let q_first = meta.fixed_column();
@@ -234,23 +233,26 @@ impl<F: Field> MPTConfig<F> {
             .try_into()
             .unwrap();
 
-        let phase_two_table: [Column<Advice>; 3] = (0..3)
+        let mult_table: [Column<Advice>; 2] = (0..2)
             .map(|_| meta.advice_column_in(SecondPhase))
             .collect::<Vec<_>>()
             .try_into()
             .unwrap();
 
-        let memory_columns = (0..5).map(|_| meta.advice_column()).collect::<Vec<_>>();
-
         let mut state_machine = StateMachineConfig::construct(meta);
         let mut rlp_item = MainRLPGadget::default();
-
-        let mut memory = Memory::new(memory_columns);
-        memory.allocate(meta, key_memory(false));
-        memory.allocate(meta, key_memory(true));
-        memory.allocate(meta, parent_memory(false));
-        memory.allocate(meta, parent_memory(true));
-        memory.allocate(meta, main_memory());
+        let memory = Memory::new(
+            meta,
+            vec![
+                (MptCellType::MemKeyC, 3),
+                (MptCellType::MemKeyS, 3),
+                (MptCellType::MemParentC, 3),
+                (MptCellType::MemParentS, 3),
+                (MptCellType::MemMain, 3),
+            ],
+            0,
+            50,
+        );
 
         let mut ctx = MPTContext {
             mpt_table,
@@ -262,11 +264,12 @@ impl<F: Field> MPTConfig<F> {
             meta,
             // Type, #cols, phase, permutable
             vec![
-                (MptCellType::StoragePhase1, 50, 0, false),
-                (MptCellType::StoragePhase2, 5, 1, false),
-                (MptCellType::StoragePhase3, 5, 2, false),
-                (MptCellType::Lookup(Table::Fixed), 4, 2, false),
-                (MptCellType::Lookup(Table::Exp), 2, 2, false),
+                (MptCellType::StoragePhase1, 51, 1, false),
+                (MptCellType::StoragePhase2, 5, 2, false),
+                (MptCellType::StoragePhase3, 5, 3, false),
+                (MptCellType::LookupByte, 4, 1, false),
+                (MptCellType::Lookup(Table::Fixed), 4, 3, false),
+                (MptCellType::Lookup(Table::Exp), 2, 3, false),
             ],
             0,
             1,
@@ -275,32 +278,39 @@ impl<F: Field> MPTConfig<F> {
             meta,
             // Type, #cols, phase, permutable
             vec![
-                (MptCellType::StoragePhase1, 20, 0, false),
-                (MptCellType::StoragePhase2, 5, 1, false),
-                (MptCellType::StoragePhase3, 5, 2, false),
-                (MptCellType::LookupByte, 4, 0, false),
-                (MptCellType::Lookup(Table::Fixed), 3, 2, false),
-                (MptCellType::Lookup(Table::Keccak), 1, 2, false),
-                (MptCellType::Lookup(Table::Exp), 2, 2, false),
+                (MptCellType::StoragePhase1, 20, 1, false),
+                (MptCellType::StoragePhase2, 5, 2, false),
+                (MptCellType::StoragePhase3, 5, 3, false),
+                (MptCellType::LookupByte, 4, 1, false),
+                (MptCellType::Lookup(Table::Fixed), 3, 3, false),
+                (MptCellType::Lookup(Table::Keccak), 1, 3, false),
+                (MptCellType::Lookup(Table::Exp), 2, 3, false),
             ],
             0,
             50,
         );
-
-        let le_r = 123456.expr();
-        let mut cb = MPTConstraintBuilder::new(50, Some(challenges.clone()), None, le_r.expr());
+        let r = 123456.expr();
+        let mut cb = MPTConstraintBuilder::new(5, Some(challenges.clone()), None, r.expr());
         meta.create_gate("MPT", |meta| {
             circuit!([meta, cb], {
                 // Populate lookup tables
                 require!(@KECCAK => <KeccakTable as LookupTable<F>>::advice_columns(&keccak_table).iter().map(|table| a!(table)).collect());
                 require!(@FIXED => fixed_table.iter().map(|table| f!(table)).collect());
-                require!(@PHASE_TWO => phase_two_table.iter().map(|table| a!(table)).collect());
+                require!(@MULT => mult_table.iter().map(|table| a!(table)).collect());
 
                 ifx!{f!(q_enable) => {
+                    // Mult table
+                    ifx! {f!(q_first) => {
+                        require!(a!(mult_table[0]) => 0);
+                        require!(a!(mult_table[1]) => 1);
+                    }}
+                    require!(a!(mult_table[0], 1) => a!(mult_table[0]) + 1.expr());
+                    require!(a!(mult_table[1], 1) => a!(mult_table[1]) * challenges.keccak_input().expr());
+
                     // RLP item decoding unit
                     cb.base.set_cell_manager(rlp_cm.clone());
                     cb.base.push_region(MPTRegion::RLP as usize);
-                    rlp_item = MainRLPGadget::construct(&mut cb);
+                    rlp_item = MainRLPGadget::construct(&mut cb, params);
                     cb.base.pop_region();
                     ctx.rlp_item = rlp_item.clone();
 
@@ -315,64 +325,62 @@ impl<F: Field> MPTConfig<F> {
                         a!(state_machine.is_start) => {
                             state_machine.step_constraints(meta, &mut cb, StartRowType::Count as usize);
                             cb.base.push_region(MPTRegion::Start as usize);
-                            state_machine.start_config = StartConfig::configure(meta, &mut cb, ctx.clone());
+                            state_machine.start_config = StartConfig::configure(meta, &mut cb, &mut ctx);
+                            ctx.memory.build_constraints(&mut cb.base, f!(q_first));
                             cb.base.pop_region();
                         },
                         a!(state_machine.is_branch) => {
                             state_machine.step_constraints(meta, &mut cb, ExtensionBranchRowType::Count as usize);
                             cb.base.push_region(MPTRegion::Branch as usize);
-                            state_machine.branch_config = ExtensionBranchConfig::configure(meta, &mut cb, ctx.clone());
+                            state_machine.branch_config = ExtensionBranchConfig::configure(meta, &mut cb, &mut ctx);
+                            ctx.memory.build_constraints(&mut cb.base, f!(q_first));
                             cb.base.pop_region();
                         },
                         a!(state_machine.is_account) => {
                             state_machine.step_constraints(meta, &mut cb, AccountRowType::Count as usize);
                             cb.base.push_region(MPTRegion::Account as usize);
-                            state_machine.account_config = AccountLeafConfig::configure(meta, &mut cb, ctx.clone());
+                            state_machine.account_config = AccountLeafConfig::configure(meta, &mut cb, &mut ctx);
+                            ctx.memory.build_constraints(&mut cb.base, f!(q_first));
                             cb.base.pop_region();
                         },
                         a!(state_machine.is_storage) => {
                             state_machine.step_constraints(meta, &mut cb, StorageRowType::Count as usize);
                             cb.base.push_region(MPTRegion::Storage as usize);
-                            state_machine.storage_config = StorageLeafConfig::configure(meta, &mut cb, ctx.clone());
+                            state_machine.storage_config = StorageLeafConfig::configure(meta, &mut cb, &mut ctx);
+                            ctx.memory.build_constraints(&mut cb.base, f!(q_first));
                             cb.base.pop_region();
                         },
-                        _ => (),
+                        _ => ctx.memory.build_constraints(&mut cb.base, f!(q_first)),
                     };
                     // Only account and storage rows can have lookups, disable lookups on all other rows
                     ifx! {not!(a!(state_machine.is_account) + a!(state_machine.is_storage)) => {
                         require!(a!(ctx.mpt_table.proof_type) => MPTProofType::Disabled.expr());
                     }}
-
-                    // Memory banks
-                    ctx.memory.build_constraints(&mut cb.base, f!(q_first));
                 }}
             });
 
             cb.base.build_constraints()
         });
 
-        // Region for spliting dynamic lookup
-        // currently not working :(
-        cb.base.push_region(MPTRegion::Count as usize);
-
         let disable_lookups: usize = var("DISABLE_LOOKUPS")
             .unwrap_or_else(|_| "0".to_string())
             .parse()
             .expect("Cannot parse DISABLE_LOOKUPS env var as usize");
         if disable_lookups == 0 {
-            cb.base.build_celltype_lookups(
+            cb.base.build_lookups(
                 meta,
                 vec![rlp_cm, state_cm],
                 vec![
                     (MptCellType::Lookup(Table::Keccak), &keccak_table),
                     (MptCellType::Lookup(Table::Fixed), &fixed_table),
-                    (MptCellType::Lookup(Table::Exp), &phase_two_table),
+                    (MptCellType::Lookup(Table::Exp), &mult_table),
                 ],
             );
+            memory.build_lookups(meta);
             cb.base.build_dynamic_lookups(
                 meta,
-                &[vec![FIXED, KECCAK], ctx.memory.tags()].concat(),
-                vec![(MptCellType::Lookup(Table::Fixed), &fixed_table)],
+                &[vec![FIXED]].concat(),
+                vec![(FIXED, &fixed_table)],
             );
         } else if disable_lookups == 1 {
             cb.base.build_dynamic_lookups(
@@ -400,7 +408,7 @@ impl<F: Field> MPTConfig<F> {
             );
         }
 
-        println!("degree: {}", meta.degree());
+        println!("max expression degree: {}", meta.degree());
         println!("num lookups: {}", meta.lookups().len());
         println!("num advices: {}", meta.num_advice_columns());
         println!("num fixed: {}", meta.num_fixed_columns());
@@ -413,9 +421,10 @@ impl<F: Field> MPTConfig<F> {
             memory,
             keccak_table,
             fixed_table,
-            phase_two_table,
+            mult_table,
             state_machine,
             rlp_item,
+            params,
             mpt_table,
             cb,
         }
@@ -427,44 +436,48 @@ impl<F: Field> MPTConfig<F> {
         layouter: &mut impl Layouter<F>,
         nodes: &[Node],
         challenges: &Challenges<Value<F>>,
-    ) -> Result<(), Error> {
+    ) -> Result<usize, Error> {
         let mut height = 0;
-        let mut memory = self.memory.clone();
-
         layouter.assign_region(
             || "MPT",
             |mut region| {
-
-                let le_r = F::from(123456u64);
-                let mut be_r = F::ZERO;
-                challenges.keccak_input().map(|v| be_r = v);
+                let r = F::from(123456u64);
+                let mut keccak_r = F::ZERO;
+                challenges.keccak_input().map(|v| keccak_r = v);
 
                 let mut pv = MPTState::new(&self.memory);
-
-                memory.clear_witness_data();
 
                 let mut offset = 0;
                 for node in nodes.iter() {
                     //println!("offset: {}", offset);
                     let mut cached_region = CachedRegion::new(
                         &mut region,
-                        challenges,
-                        le_r,
-                        be_r,
+                        r,
+                        keccak_r,
                     );
+
+                    let item_types = if node.start.is_some() {
+                        NODE_RLP_TYPES_START.to_vec()
+                    } else if node.extension_branch.is_some() {
+                        NODE_RLP_TYPES_BRANCH.to_vec()
+                    } else if node.account.is_some() {
+                        NODE_RLP_TYPES_ACCOUNT.to_vec()
+                    } else if node.storage.is_some() {
+                        NODE_RLP_TYPES_STORAGE.to_vec()
+                    } else {
+                        unreachable!()
+                    };
 
                     // Assign bytes
                     let mut rlp_values = Vec::new();
                     // Decompose RLP
-                    for (idx, bytes) in node.values.iter().enumerate() {
+                    for (idx, (bytes, item_type)) in node.values.iter().zip(item_types.iter()).enumerate() {
                         cached_region.push_region(offset + idx, MPTRegion::RLP as usize);
-                        let is_nibbles = node.extension_branch.is_some()
-                            && idx == ExtensionBranchRowType::KeyC as usize;
                         let rlp_value = self.rlp_item.assign(
                             &mut cached_region,
                             offset + idx,
                             bytes,
-                            is_nibbles,
+                            *item_type,
                         )?;
                         rlp_values.push(rlp_value);
                         cached_region.pop_region();
@@ -472,7 +485,7 @@ impl<F: Field> MPTConfig<F> {
 
                     // Assign nodes
                     if node.start.is_some() {
-                        //println!("{}: start", offset);
+                        // println!("{}: start", offset);
                         cached_region.push_region(offset, MPTRegion::Start as usize);
                         assign!(cached_region, (self.state_machine.is_start, offset) => "is_start", true.scalar())?;
                         self.state_machine.start_config.assign(
@@ -485,7 +498,7 @@ impl<F: Field> MPTConfig<F> {
                         )?;
                         cached_region.pop_region();
                     } else if node.extension_branch.is_some() {
-                        //println!("{}: branch", offset);
+                        // println!("{}: branch", offset);
                         cached_region.push_region(offset, MPTRegion::Branch as usize);
                         assign!(cached_region, (self.state_machine.is_branch, offset) => "is_branch", true.scalar())?;
                         self.state_machine.branch_config.assign(
@@ -498,7 +511,7 @@ impl<F: Field> MPTConfig<F> {
                         )?;
                         cached_region.pop_region();
                     } else if node.account.is_some() {
-                        //println!("{}: account", offset);
+                        // println!("{}: account", offset);
                         cached_region.push_region(offset, MPTRegion::Account as usize);
                         assign!(cached_region, (self.state_machine.is_account, offset) => "is_account", true.scalar())?;
                         self.state_machine.account_config.assign(
@@ -511,7 +524,7 @@ impl<F: Field> MPTConfig<F> {
                         )?;
                         cached_region.pop_region();
                     } else if node.storage.is_some() {
-                        //println!("{}: storage", offset);
+                        // println!("{}: storage", offset);
                         cached_region.push_region(offset, MPTRegion::Storage as usize);
                         assign!(cached_region, (self.state_machine.is_storage, offset) => "is_storage", true.scalar())?;
                         self.state_machine.storage_config.assign(
@@ -524,14 +537,19 @@ impl<F: Field> MPTConfig<F> {
                         )?;
                         cached_region.pop_region();
                     }
-                    cached_region.push_region(offset, MPTRegion::Count as usize);
-                    cached_region.assign_stored_expressions(&self.cb.base)?;
-                    cached_region.pop_region();
-                    offset += node.values.len();
-                }
 
+                    offset += node.values.len();
+
+                    pv.memory.assign(&mut cached_region, offset)?;
+
+                    cached_region.assign_stored_expressions(&self.cb.base, challenges)?;
+                }
                 height = offset;
-                memory = pv.memory;
+
+                // Make sure the circuit is high enough for the mult table
+                while height < (2 * HASH_WIDTH + 1) {
+                    height += 1;
+                }
 
                 for offset in 0..height {
                     assignf!(region, (self.q_enable, offset) => true.scalar())?;
@@ -543,9 +561,9 @@ impl<F: Field> MPTConfig<F> {
             },
         )?;
 
-        memory.assign(layouter, height)?;
+        // memory.assign(layouter, height)?;
 
-        Ok(())
+        Ok(height)
     }
 
     fn load_fixed_table(&self, layouter: &mut impl Layouter<F>) -> Result<(), Error> {
@@ -564,7 +582,7 @@ impl<F: Field> MPTConfig<F> {
                 let r = F::from(123456u64);
                 let mut mult = F::ONE;
                 for ind in 0..(2 * HASH_WIDTH + 1) {
-                    assignf!(region, (self.fixed_table[0], offset) => FixedTableTag::LERMult.scalar())?;
+                    assignf!(region, (self.fixed_table[0], offset) => FixedTableTag::RMult.scalar())?;
                     assignf!(region, (self.fixed_table[1], offset) => ind.scalar())?;
                     assignf!(region, (self.fixed_table[2], offset) => mult)?;
                     mult *= r;
@@ -586,26 +604,42 @@ impl<F: Field> MPTConfig<F> {
                 }
 
                 // Byte range with length table
-                // These fixed rows enable to easily check whether there are zeros in the unused columns (the number of unused columns vary).
+                // This allows us to easily check whether there are zeros in the unused columns (the number of unused columns vary).
                 // The lookups ensure that when the unused columns start, the values in these columns are zeros -
-                // when the unused columns start, the value that is used for the lookup in the last column is negative
+                // when the unused columns start, the value that is used for the lookup in the last column is zero or negative
                 // and thus a zero is enforced.
-                let max_length = 34i32;
-                for (tag, range) in [
-                    (FixedTableTag::RangeKeyLen256, 256),
-                    (FixedTableTag::RangeKeyLen16, 16),
+                for (tag, range, out_of_range) in [
+                    (FixedTableTag::RangeKeyLen256, 256, 1),
+                    (FixedTableTag::RangeKeyLen16, 16, 16),
                 ] {
-                    for n in -max_length..=max_length {
-                        let range = if n <= 0 && range == 256 { 1 } else { range };
-                        for idx in 0..range {
-                            let v = n.scalar();
-                            assignf!(region, (self.fixed_table[0], offset) => tag.scalar())?;
-                            assignf!(region, (self.fixed_table[1], offset) => idx.scalar())?;
-                            assignf!(region, (self.fixed_table[2], offset) => v)?;
-                            offset += 1;
+                    let get_range = |n: i32| {
+                        if n <= 0 { out_of_range } else { range }
+                    };
+                    let max_length = RLP_UNIT_NUM_BYTES as i32;
+                    for idx in -max_length..=max_length {
+                        if self.params.is_two_byte_lookup_enabled() {
+                            let range1 = get_range(idx);
+                            for byte1 in 0..range1 {
+                                let range2 = get_range(idx - 1);
+                                for byte2 in 0..range2 {
+                                    assignf!(region, (self.fixed_table[0], offset) => tag.scalar())?;
+                                    assignf!(region, (self.fixed_table[1], offset) => idx.scalar())?;
+                                    assignf!(region, (self.fixed_table[2], offset) => byte1.scalar())?;
+                                    assignf!(region, (self.fixed_table[3], offset) => byte2.scalar())?;
+                                    offset += 1;
+                                }
+                            }
+                        } else {
+                            let range = get_range(idx);
+                            for byte in 0..range {
+                                assignf!(region, (self.fixed_table[0], offset) => tag.scalar())?;
+                                assignf!(region, (self.fixed_table[1], offset) => idx.scalar())?;
+                                assignf!(region, (self.fixed_table[2], offset) => byte.scalar())?;
+                                offset += 1;
+                            }
                         }
-                    }
                 }
+            }
 
                 // Compact encoding of the extension key, find out if the key is odd or not.
                 // Even - The full byte is simply 0.
@@ -638,27 +672,23 @@ impl<F: Field> MPTConfig<F> {
         )
     }
 
-    fn load_phase_two_table(
+    fn load_mult_table(
         &self,
         layouter: &mut impl Layouter<F>,
         challenges: &Challenges<Value<F>>,
+        height: usize,
     ) -> Result<(), Error> {
         layouter.assign_region(
-            || "phase two table",
+            || "mult table",
             |mut region| {
-                // let le_r = F::from(123456u64);
-                // let be_r = r + F::ONE;
-                let mut be_r = F::ZERO;
-                challenges.keccak_input().map(|k| be_r = k);
-                
-                let mut offset = 0;
+                let mut r = F::ZERO;
+                challenges.keccak_input().map(|k| r = k);
+
                 let mut mult = F::ONE;
-                for ind in 0..(2 * HASH_WIDTH + 1) {
-                    assign!(region, (self.phase_two_table[0], offset) => PhaseTwoTableTag::BERMult.scalar())?;
-                    assign!(region, (self.phase_two_table[1], offset) => ind.scalar())?;
-                    assign!(region, (self.phase_two_table[2], offset) => mult)?;
-                    mult *= be_r;
-                    offset += 1;
+                for idx in 0..=height {
+                    assign!(region, (self.mult_table[0], idx) => idx.scalar())?;
+                    assign!(region, (self.mult_table[1], idx) => mult)?;
+                    mult *= r;
                 }
                 Ok(())
             },
@@ -666,30 +696,58 @@ impl<F: Field> MPTConfig<F> {
     }
 }
 
+/// MPT Circuit for proving the storage modification is valid.
 #[derive(Default)]
-struct MPTCircuit<F> {
-    nodes: Vec<Node>,
-    keccak_data: Vec<Vec<u8>>,
-    randomness: F,
+pub struct MPTCircuit<F> {
+    ///
+    pub nodes: Vec<Node>,
+    ///
+    pub keccak_data: Vec<Vec<u8>>,
+    ///
+    pub degree: usize,
+    ///
+    pub randomness: F,
+}
+
+/// Super Circuit configuration parameters
+#[derive(Copy, Clone, Default)]
+pub struct MPTCircuitParams {
+    degree: usize,
+}
+
+impl MPTCircuitParams {
+    fn is_two_byte_lookup_enabled(&self) -> bool {
+        self.degree >= 22
+    }
 }
 
 impl<F: Field> Circuit<F> for MPTCircuit<F> {
     type Config = (MPTConfig<F>, Challenges);
     type FloorPlanner = SimpleFloorPlanner;
-    type Params = ();
+    type Params = MPTCircuitParams;
 
     fn without_witnesses(&self) -> Self {
         Self::default()
     }
 
-    fn configure(meta: &mut ConstraintSystem<F>) -> Self::Config {
+    fn params(&self) -> Self::Params {
+        MPTCircuitParams {
+            degree: self.degree,
+        }
+    }
+
+    fn configure_with_params(meta: &mut ConstraintSystem<F>, params: Self::Params) -> Self::Config {
         let challenges = Challenges::construct(meta);
         let challenges_expr = challenges.exprs(meta);
         let keccak_table = KeccakTable::construct(meta);
         (
-            MPTConfig::configure(meta, challenges_expr, keccak_table),
+            MPTConfig::new(meta, challenges_expr, keccak_table, params),
             challenges,
         )
+    }
+
+    fn configure(_meta: &mut ConstraintSystem<F>) -> Self::Config {
+        unreachable!();
     }
 
     fn synthesize(
@@ -698,9 +756,9 @@ impl<F: Field> Circuit<F> for MPTCircuit<F> {
         mut layouter: impl Layouter<F>,
     ) -> Result<(), Error> {
         let challenges = _challenges.values(&mut layouter);
+        let height = config.assign(&mut layouter, &self.nodes, &challenges)?;
         config.load_fixed_table(&mut layouter)?;
-        config.load_phase_two_table(&mut layouter, &challenges)?;
-        config.assign(&mut layouter, &self.nodes, &challenges)?;
+        config.load_mult_table(&mut layouter, &challenges, height)?;
         config
             .keccak_table
             .dev_load(&mut layouter, &self.keccak_data, &challenges, false)?;
@@ -711,12 +769,8 @@ impl<F: Field> Circuit<F> for MPTCircuit<F> {
 
 #[cfg(test)]
 mod tests {
-    use crate::mpt_circuit::witness_row::{prepare_witness, MptWitnessRow};
-
     use super::*;
-
     use halo2_proofs::{dev::MockProver, halo2curves::bn256::Fr};
-
     use std::fs;
 
     #[test]
@@ -738,33 +792,42 @@ mod tests {
                 let mut parts = path.to_str().unwrap().split('-');
                 parts.next();
                 let file = std::fs::File::open(path.clone());
+
                 let reader = std::io::BufReader::new(file.unwrap());
-                let w: Vec<Vec<u8>> = serde_json::from_reader(reader).unwrap();
+                let mut nodes: Vec<Node> = serde_json::from_reader(reader).unwrap();
+                let num_rows: usize = nodes.iter().map(|node| node.values.len()).sum();
+
+                // TODO(Brecht): move to the witness geration side
+                // Patch the hash value so its RLP encoding is valid
+                for node in nodes.iter_mut() {
+                    if node.start.is_some() {
+                        for value in node.values.iter_mut() {
+                            if value[0] == 0 {
+                                value[0] = 160;
+                            }
+                        }
+                    }
+                }
 
                 let randomness: Fr = 123456.scalar();
 
                 let mut keccak_data = vec![];
-                let mut witness_rows = vec![];
-                for row in w.iter() {
-                    if row[row.len() - 1] == 5 {
-                        keccak_data.push(row[0..row.len() - 1].to_vec());
-                    } else {
-                        let row = MptWitnessRow::<Fr>::new(row[0..row.len()].to_vec());
-                        witness_rows.push(row);
+                for node in nodes.iter() {
+                    for k in node.keccak_data.iter() {
+                        keccak_data.push(k.clone());
                     }
                 }
-                let nodes = prepare_witness(&mut witness_rows);
-                let num_rows: usize = nodes.iter().map(|node| node.values.len()).sum();
 
+                let degree = 14;
                 let circuit = MPTCircuit::<Fr> {
                     nodes,
                     keccak_data,
                     randomness,
+                    degree,
                 };
 
                 println!("{} {:?}", idx, path);
-                // let prover = MockProver::run(9, &circuit, vec![pub_root]).unwrap();
-                let prover = MockProver::run(14 /* 9 */, &circuit, vec![]).unwrap();
+                let prover = MockProver::run(degree as u32, &circuit, vec![]).unwrap();
                 assert_eq!(prover.verify_at_rows(0..num_rows, 0..num_rows,), Ok(()));
                 // assert_eq!(prover.verify_par(), Ok(()));
                 // prover.assert_satisfied();

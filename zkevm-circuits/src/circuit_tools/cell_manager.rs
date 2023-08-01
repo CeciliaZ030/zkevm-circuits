@@ -1,25 +1,21 @@
 //! Cell manager
 use crate::{
-    circuit_tools::cached_region::{CachedRegion, ChallengeSet},
+    circuit_tools::cached_region::CachedRegion,
     util::{query_expression, Expr},
 };
 
+use crate::table::LookupTable;
 use eth_types::Field;
 use halo2_proofs::{
     circuit::{AssignedCell, Value},
     plonk::{
-        Advice, Column, ConstraintSystem, Error, Expression, FirstPhase, SecondPhase, ThirdPhase,
-        VirtualCells,
+        Advice, Any, Column, ConstraintSystem, Error, Expression, FirstPhase, SecondPhase,
+        ThirdPhase, VirtualCells,
     },
     poly::Rotation,
 };
 use lazy_static::__Deref;
-use std::{
-    cmp::{max, Ordering},
-    collections::{BTreeMap, HashMap},
-    fmt::Debug,
-    hash::Hash,
-};
+use std::{collections::{BTreeMap, HashMap}, fmt::Debug, hash::Hash, cmp::{max, Ordering}};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Cell<F> {
@@ -39,9 +35,9 @@ impl<F: Field> Cell<F> {
         }
     }
 
-    pub(crate) fn assign<S: ChallengeSet<F>>(
+    pub(crate) fn assign(
         &self,
-        region: &mut CachedRegion<'_, '_, F, S>,
+        region: &mut CachedRegion<'_, '_, F>,
         offset: usize,
         value: F,
     ) -> Result<AssignedCell<F, F>, Error> {
@@ -58,9 +54,9 @@ impl<F: Field> Cell<F> {
         )
     }
 
-    pub(crate) fn assign_value<S: ChallengeSet<F>>(
+    pub(crate) fn assign_value(
         &self,
-        region: &mut CachedRegion<'_, '_, F, S>,
+        region: &mut CachedRegion<'_, '_, F>,
         offset: usize,
         value: Value<F>,
     ) -> Result<AssignedCell<F, F>, Error> {
@@ -131,9 +127,9 @@ impl<C: CellType> CellConfig<C> {
         let mut columns = Vec::with_capacity(self.num_columns);
         for _ in 0..self.num_columns {
             let tmp = match self.phase {
-                0 => meta.advice_column_in(FirstPhase),
-                1 => meta.advice_column_in(SecondPhase),
-                2 => meta.advice_column_in(ThirdPhase),
+                1 => meta.advice_column_in(FirstPhase),
+                2 => meta.advice_column_in(SecondPhase),
+                3 => meta.advice_column_in(ThirdPhase),
                 _ => unreachable!(),
             };
             columns.push(tmp);
@@ -195,9 +191,9 @@ impl CellType for DefaultCellType {
     fn storage_for_phase(phase: u8) -> Self {
         // println!("phase: {}", phase);
         match phase {
-            0 => DefaultCellType::StoragePhase1,
-            1 => DefaultCellType::StoragePhase2,
-            2 => DefaultCellType::StoragePhase3,
+            1 => DefaultCellType::StoragePhase1,
+            2 => DefaultCellType::StoragePhase2,
+            3 => DefaultCellType::StoragePhase3,
             _ => unreachable!(),
         }
     }
@@ -205,6 +201,7 @@ impl CellType for DefaultCellType {
 
 #[derive(Clone, Debug)]
 pub(crate) struct CellColumn<F, C: CellType> {
+    pub(crate) column: Column<Advice>,
     index: usize,
     pub(crate) cell_type: C,
     height: usize,
@@ -212,11 +209,10 @@ pub(crate) struct CellColumn<F, C: CellType> {
     pub(crate) expr: Expression<F>,
 }
 
+
 impl<F: Field, C: CellType> PartialEq for CellColumn<F, C> {
     fn eq(&self, other: &Self) -> bool {
-        self.index == other.index
-            && self.cell_type == other.cell_type
-            && self.height == other.height
+        self.index == other.index && self.cell_type == other.cell_type && self.height == other.height 
     }
 }
 
@@ -240,6 +236,7 @@ impl<F: Field, C: CellType> Expr<F> for CellColumn<F, C> {
     }
 }
 
+
 #[derive(Clone, Debug)]
 pub struct CellManager<F, C: CellType> {
     configs: Vec<CellConfig<C>>,
@@ -253,8 +250,9 @@ pub struct CellManager<F, C: CellType> {
     parent_ctx: Option<CmContext<F, C>>,
 }
 
+
 #[derive(Default, Clone, Debug)]
-struct CmContext<F, C: CellType> {
+struct CmContext<F, C: CellType>{
     parent: Box<Option<CmContext<F, C>>>,
     columns: Vec<CellColumn<F, C>>,
 }
@@ -266,11 +264,12 @@ impl<F: Field, C: CellType> CellManager<F, C> {
         offset: usize,
         max_height: usize,
     ) -> Self {
+        assert!(max_height >= 1);
         let configs = configs
             .into_iter()
             .map(|c| c.into())
             .collect::<Vec<CellConfig<C>>>();
-
+        
         let mut width = 0;
         let mut columns = Vec::new();
         for config in configs.iter() {
@@ -283,6 +282,7 @@ impl<F: Field, C: CellType> CellManager<F, C> {
                     });
                 }
                 columns.push(CellColumn {
+                    column: *col,
                     index: columns.len(),
                     cell_type: config.cell_type,
                     height: 0,
@@ -303,6 +303,15 @@ impl<F: Field, C: CellType> CellManager<F, C> {
         }
     }
 
+    pub(crate) fn restart(&mut self) {
+        self.height = self.height_limit;
+        for col in self.columns.iter_mut() {
+            col.height = 0;
+        }
+        self.branch_ctxs.clear();
+        self.parent_ctx = None;
+    }
+
     pub(crate) fn cur_to_parent(&mut self) {
         let new_parent = match self.parent_ctx.clone() {
             // if parent context exists, meaning we are deep in a callstack
@@ -316,7 +325,7 @@ impl<F: Field, C: CellType> CellManager<F, C> {
             None => CmContext {
                 parent: Box::new(None),
                 columns: self.columns.clone(),
-            },
+            }
         };
         self.parent_ctx = Some(new_parent);
         self.reset(self.height_limit);
@@ -335,7 +344,7 @@ impl<F: Field, C: CellType> CellManager<F, C> {
             None => CmContext {
                 parent: Box::new(None),
                 columns: self.columns.clone(),
-            },
+            }
         };
         self.branch_ctxs.insert(name.to_string(), new_branch);
         self.reset(self.height_limit);
@@ -343,20 +352,18 @@ impl<F: Field, C: CellType> CellManager<F, C> {
 
     pub(crate) fn recover_max_branch(&mut self) {
         let mut new_cols = self.columns.clone();
-        let parent = self
-            .parent_ctx
-            .clone()
-            .expect("Retruning context needs parent");
-        self.branch_ctxs.iter().for_each(|(_name, ctx)| {
-            for c in 0..self.width {
-                new_cols[c] = max(&new_cols[c], &ctx.columns[c]).clone();
-                new_cols[c] = max(&new_cols[c], &parent.columns[c]).clone();
-            }
-        });
+        let parent = self.parent_ctx.clone().expect("Retruning context needs parent");
+        self.branch_ctxs
+            .iter()
+            .for_each(|(name, ctx)| {
+                for c in 0..self.width {
+                    new_cols[c] = max(&new_cols[c], &ctx.columns[c]).clone();
+                    new_cols[c] = max(&new_cols[c], &parent.columns[c]).clone();
+                }
+            });
         self.columns = new_cols;
         self.branch_ctxs.clear();
-        self.parent_ctx = self
-            .parent_ctx
+        self.parent_ctx = self.parent_ctx
             .clone()
             .map(|ctx| ctx.parent.deref().clone())
             .unwrap();
@@ -447,5 +454,33 @@ impl<F: Field, C: CellType> CellManager<F, C> {
             }
         }
         columns
+    }
+}
+
+/// LookupTable created dynamically and stored in an advice column
+#[derive(Clone, Debug)]
+pub struct DynamicLookupTable {
+    /// Table
+    pub table: Column<Advice>,
+}
+
+impl DynamicLookupTable {
+    /// Construct a new BlockTable
+    pub fn from<F: Field, C: CellType>(cm: &CellManager<F, C>, cell_type: C) -> Self {
+        let table_columns = cm.get_typed_columns(cell_type);
+        assert_eq!(table_columns.len(), 1);
+        Self {
+            table: table_columns[0].column,
+        }
+    }
+}
+
+impl<F: Field> LookupTable<F> for DynamicLookupTable {
+    fn columns(&self) -> Vec<Column<Any>> {
+        vec![self.table.into()]
+    }
+
+    fn annotations(&self) -> Vec<String> {
+        vec![String::from("generated")]
     }
 }
