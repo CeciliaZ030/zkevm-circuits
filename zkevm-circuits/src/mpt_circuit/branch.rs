@@ -12,7 +12,7 @@ use super::{
 use crate::{
     circuit,
     circuit_tools::{
-        cached_region::CachedRegion, cell_manager::Cell, constraint_builder::RLCChainable2,
+        cached_region::CachedRegion, cell_manager::Cell, constraint_builder::{RLCChainable2, COMPRESS, REDUCE},
         gadgets::LtGadget,
     },
     mpt_circuit::{
@@ -189,7 +189,7 @@ impl<F: Field> BranchGadget<F> {
                 ifx! {not!(is_placeholder[is_s.idx()]) => {
                     ifx!{or::expr(&[is_root[is_s.idx()].expr(), not!(is_not_hashed)]) => {
                         // Hashed branch hash in parent branch
-                        require!((1, rlc, num_bytes, parent_rlc[is_s.idx()].expr()) =>> @KECCAK, REDUCE);
+                        require!((1, rlc, num_bytes, parent_rlc[is_s.idx()].expr()) =>> @KECCAK, (COMPRESS, REDUCE));
                     } elsex {
                         // Non-hashed branch hash in parent branch
                         // TODO(Brecht): restore

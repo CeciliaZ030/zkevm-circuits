@@ -1107,7 +1107,7 @@ impl<F: Field> DriftedGadget<F> {
                         //let leaf_rlc = (config.drifted_rlp_key.rlc(be_r), mult.expr()).rlc_chain(leaf_no_key_rlc[is_s.idx()].expr());
                         let leaf_rlc = config.drifted_rlp_key.rlc2(&cb.keccak_r).rlc_chain2((leaf_no_key_rlc[is_s.idx()].expr(), leaf_no_key_rlc_mult[is_s.idx()].expr()));
                         // The drifted leaf needs to be stored in the branch at `drifted_index`.
-                        require!((1, leaf_rlc, config.drifted_rlp_key.rlp_list.num_bytes(), parent_data[is_s.idx()].drifted_parent_rlc.expr()) =>> @KECCAK, REDUCE);
+                        require!((1, leaf_rlc, config.drifted_rlp_key.rlp_list.num_bytes(), parent_data[is_s.idx()].drifted_parent_rlc.expr()) =>> @KECCAK, (COMPRESS, REDUCE));
                     }
                 }}
             }}
@@ -1289,8 +1289,8 @@ impl<F: Field> MainRLPGadget<F> {
 
             // TODO(Brecht): cleanup inv challenge
             require!(config.mult_inv.expr() * pow::expr(cb.keccak_r.expr(), RLP_UNIT_NUM_BYTES) => config.mult_diff_keccak.expr());
-            require!((FixedTableTag::RMult, config.rlp.num_bytes(), config.mult_diff.expr()) => @FIXED, (COMPRESS));
-            require!((config.rlp.num_bytes(), config.mult_diff_keccak.expr()) => @MULT);
+            require!((FixedTableTag::RMult, config.rlp.num_bytes(), config.mult_diff.expr()) =>> @FIXED, (COMPRESS, REDUCE));
+            require!((config.rlp.num_bytes(), config.mult_diff_keccak.expr()) =>> @MULT, (COMPRESS, REDUCE));
             // `tag` and `max_len` are "free" input that needs to be constrained externally!
 
             // Range/zero checks
@@ -1307,11 +1307,15 @@ impl<F: Field> MainRLPGadget<F> {
                         config.num_bytes.expr() - idx.expr(),
                         config.bytes[idx],
                         config.bytes[idx + 1]
-                    ) => @FIXED, (TO_FIX));
+                    ) => @FIXED,  (COMPRESS, TO_FIX));
                 }
             } else {
                 for (idx, byte) in config.bytes.iter().enumerate() {
-                    require!((config.tag.expr(), config.num_bytes.expr() - idx.expr(), byte.expr()) => @FIXED, (TO_FIX));
+                    require!((
+                        config.tag.expr(), 
+                        config.num_bytes.expr() - idx.expr(), 
+                        byte.expr()
+                    ) => @FIXED, (COMPRESS, TO_FIX));
                 }
             }
 

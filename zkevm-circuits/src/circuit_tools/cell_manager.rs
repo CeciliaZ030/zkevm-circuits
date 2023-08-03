@@ -284,6 +284,13 @@ impl<F: Field, C: CellType> CellManager<F, C> {
         }
     }
 
+    pub(crate) fn restart(&mut self) {
+        self.height = self.height_limit;
+        for col in self.columns.iter_mut() {
+            col.height = 0;
+        }
+    }
+
     pub(crate) fn query_cells(&mut self, cell_type: C, count: usize) -> Vec<Cell<F>> {
         let mut cells = Vec::with_capacity(count);
         while cells.len() < count {
