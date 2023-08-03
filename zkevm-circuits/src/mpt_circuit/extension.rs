@@ -12,7 +12,7 @@ use crate::{
     circuit,
     circuit_tools::{
         cached_region::CachedRegion, cell_manager::Cell, 
-        constraint_builder::{RLCChainable2, REDUCE, COMPRESS, TO_FIX},
+        constraint_builder::{RLCChainable2, REDUCE, COMPRESS},
         gadgets::LtGadget,
     },
     mpt_circuit::{
@@ -91,7 +91,7 @@ impl<F: Field> ExtensionGadget<F> {
 
             config.rlp_key = ListKeyGadget::construct(cb, &key_items[0]);
             config.is_key_part_odd = cb.query_cell();
-            let first_byte = matchx! {(
+            let _first_byte = matchx! {(
                 key_items[true.idx()].is_short() => key_items[true.idx()].bytes[0].expr(),
                 key_items[true.idx()].is_long() => key_items[true.idx()].bytes[1].expr(),
                 key_items[true.idx()].is_very_long() => key_items[true.idx()].bytes[2].expr(),

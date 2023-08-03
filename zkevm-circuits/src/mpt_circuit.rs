@@ -43,11 +43,11 @@ use crate::{
     circuit_tools::{cached_region::CachedRegion, cell_manager::CellManager, memory::Memory},
     evm_circuit::table::Table,
     mpt_circuit::{
-        helpers::{MPTConstraintBuilder, MainRLPGadget, MptCellType, FIXED, KECCAK, MULT},
+        helpers::{MPTConstraintBuilder, MainRLPGadget, MptCellType},
         start::StartConfig,
         storage_leaf::StorageLeafConfig,
     },
-    table::{KeccakTable, LookupTable, MPTProofType, MptTable},
+    table::{KeccakTable, MPTProofType, MptTable},
     util::Challenges,
 };
 use extension_branch::ExtensionBranchConfig;

@@ -110,7 +110,7 @@ impl<F: Field, C: CellType> TabelMerger<F, C> {
 
     fn merge_and_select(
         &self,
-        cb: &mut ConstraintBuilder<F, C>,
+        _cb: &mut ConstraintBuilder<F, C>,
     ) -> Vec<Expression<F>> {
         let (selector, v) = self.merge_unsafe(); 
         v.iter().map(|v| selector.expr() * v.expr()).collect()
@@ -447,7 +447,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
                     while values.len() < table.len() {
                         values.push(0.expr());
                     }
-                    meta.lookup_any(description, |meta| {
+                    meta.lookup_any(description, |_meta| {
                         values
                             .iter()
                             .zip(table.iter())

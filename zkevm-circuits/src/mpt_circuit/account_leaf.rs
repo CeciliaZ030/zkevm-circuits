@@ -16,7 +16,7 @@ use crate::{
     circuit_tools::{
         cached_region::CachedRegion,
         cell_manager::Cell,
-        constraint_builder::{RLCChainable2, RLCable, RLCableValue, COMPRESS, REDUCE, TO_FIX},
+        constraint_builder::{RLCChainable2, RLCable, RLCableValue, COMPRESS, REDUCE},
         gadgets::IsEqualGadget,
     },
     mpt_circuit::{
