@@ -65,7 +65,7 @@ impl<F: Field> TableData<F> {
     }
 }
 
-struct TabelMerger<F, C>{
+struct TableMerger<F, C>{
     data: Vec<TableData<F>>,
     _phantom: PhantomData<C>,
 }
