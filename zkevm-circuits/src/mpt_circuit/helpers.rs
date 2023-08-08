@@ -981,16 +981,17 @@ impl<F: Field> MPTConstraintBuilder<F> {
             .add_lookup(description, tag, values, to_fixed, compress, reduce, fixed_path)
     }
 
-    pub(crate) fn store_dynamic_table(
+    pub(crate) fn store_table(
         &mut self,
         description: &'static str,
         tag: MptCellType,
         values: Vec<Expression<F>>,
         compress: bool,
         is_split: bool,
+        dyn_path: bool,
     ) {
         self.base
-            .store_dynamic_table(description, tag, values, compress, is_split)
+            .store_table(description, tag, values, compress, is_split, dyn_path)
     }
 }
 

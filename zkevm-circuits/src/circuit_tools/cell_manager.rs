@@ -204,7 +204,7 @@ pub(crate) struct CellColumn<F, C: CellType> {
     index: usize,
     pub(crate) cell_type: C,
     height: usize,
-    cells: Vec<Cell<F>>,
+    pub(crate) cells: Vec<Cell<F>>,
     pub(crate) expr: Expression<F>,
 }
 
@@ -236,7 +236,8 @@ impl<F: Field, C: CellType> Expr<F> for CellColumn<F, C> {
     }
 }
 
-#[derive(Clone, Debug)]
+
+#[derive(Clone, Debug, Default)]
 pub struct CellManager<F, C: CellType> {
     configs: Vec<CellConfig<C>>,
     columns: Vec<CellColumn<F, C>>,
@@ -251,37 +252,42 @@ impl<F: Field, C: CellType> CellManager<F, C> {
         offset: usize,
         max_height: usize,
     ) -> Self {
-        let configs = configs
+        let mut cm = CellManager::default();
+        configs
             .into_iter()
-            .map(|c| c.into())
-            .collect::<Vec<CellConfig<C>>>();
+            .for_each(|c| cm.add_celltype(meta, c, offset));
+        cm.height = max_height;
+        cm.height_limit = max_height;
+        cm
+    }
 
-        let mut columns = Vec::new();
-        for config in configs.iter() {
-            let cols = config.init_columns(meta);
-            for col in cols.iter() {
-                let mut cells = Vec::new();
-                for r in 0..max_height {
-                    query_expression(meta, |meta| {
-                        cells.push(Cell::new(meta, *col, offset + r));
-                    });
-                }
-                columns.push(CellColumn {
-                    column: *col,
-                    index: columns.len(),
-                    cell_type: config.cell_type,
-                    height: 0,
-                    expr: cells[0].expr(),
-                    cells,
+    pub(crate) fn add_celltype(
+        &mut self,
+        meta: &mut ConstraintSystem<F>,
+        config: (C, usize, u8, bool),
+        offset: usize,
+    ) {
+        if self.get_typed_columns(config.0).len() != 0 {
+            panic!("CellManager: cell type already exists");
+        }
+        let config = CellConfig::from(config);
+        for col in config.init_columns(meta).iter() {
+            let mut cells = Vec::new();
+            for r in 0..self.height_limit {
+                query_expression(meta, |meta| {
+                    cells.push(Cell::new(meta, *col, offset + r));
                 });
             }
+            self.columns.push(CellColumn {
+                column: *col,
+                index: self.columns.len(),
+                cell_type: config.cell_type,
+                height: 0,
+                expr: cells[0].expr(),
+                cells,
+            });
         }
-        Self {
-            configs,
-            columns,
-            height: max_height,
-            height_limit: max_height,
-        }
+        self.configs.push(config);
     }
 
     pub(crate) fn restart(&mut self) {
@@ -289,6 +295,14 @@ impl<F: Field, C: CellType> CellManager<F, C> {
         for col in self.columns.iter_mut() {
             col.height = 0;
         }
+    }
+
+    pub(crate) fn add_columns(
+        &mut self,
+        meta: &mut ConstraintSystem<F>,
+        configs: Vec<(C, usize, u8, bool)>
+    ) {
+
     }
 
     pub(crate) fn query_cells(&mut self, cell_type: C, count: usize) -> Vec<Cell<F>> {

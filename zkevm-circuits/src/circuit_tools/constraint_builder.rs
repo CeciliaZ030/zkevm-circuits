@@ -70,7 +70,7 @@ struct TableMerger<F, C>{
     _phantom: PhantomData<C>,
 }
 
-impl<F: Field, C: CellType> TabelMerger<F, C> {
+impl<F: Field, C: CellType> TableMerger<F, C> {
     fn merge_check(&self, cb: &mut ConstraintBuilder<F, C>) {
         let selector = sum::expr(self.data.iter().map(|t| t.condition()));
         crate::circuit!([meta, cb], {
@@ -117,6 +117,12 @@ impl<F: Field, C: CellType> TabelMerger<F, C> {
     }
 }
 
+pub enum BuildOptions {
+    Fixed,
+    Dynamic,
+    Both,
+}
+
 /// Constraint builder
 #[derive(Clone)]
 pub struct ConstraintBuilder<F, C: CellType> {
@@ -134,6 +140,9 @@ pub struct ConstraintBuilder<F, C: CellType> {
     /// The tables written during synthesis
     /// write to RAM
     pub dynamic_tables: HashMap<C, Vec<TableData<F>>>,
+    /// The tables preloaded before configuration
+    /// Read-only memory
+    pub fixed_tables: HashMap<C, Vec<Expression<F>>>,
     /// All stored expressions
     pub stored_expressions: HashMap<usize, Vec<StoredExpression<F, C>>>,
     /// CellManager
@@ -164,6 +173,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
             conditions: Vec::new(),
             lookups: HashMap::new(),
             dynamic_tables: HashMap::new(),
+            fixed_tables: HashMap::new(),
             cell_manager,
             disable_description: false,
             stored_expressions: HashMap::new(),
@@ -178,6 +188,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         self.constraints.clear();
         self.conditions.clear();
         self.dynamic_tables.clear();
+        self.fixed_tables.clear();
         self.stored_expressions.clear();
         self.region_id = 0;
         self.state_context.clear();
@@ -371,124 +382,124 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         self.constraints.clone()
     }
 
+    pub(crate) fn build_fixed_path(
+        &mut self,
+        meta: &mut ConstraintSystem<F>,
+        cell_managers: &[CellManager<F, C>],
+        tag: &C
+    ){
+        let challenge = self.lookup_challenge.clone().unwrap();
+        if let Some(table) = self.fixed_tables.get(tag) {
+            for cm in cell_managers {
+                for col in cm.get_typed_columns(*tag) {
+                    meta.lookup_any(format!("{:?}", tag), |meta| {
+                        vec![(col.expr, rlc::expr(&table, challenge.expr()))]
+                    });
+                }
+            }
+        }
+    }
+
+    pub(crate) fn build_dynamic_path(
+        &mut self,
+        meta: &mut ConstraintSystem<F>,
+        tag: &C
+    ){
+        if let Some(lookups) = self.lookups.get(tag) {
+            for data in lookups.iter() {
+                let LookupData {
+                    description,
+                    values,
+                    compressed,
+                    regional_condition,
+                    to_fixed,
+                    ..
+                } = data.clone();
+                let mut table = if to_fixed {
+                    // (v1, v2, v3) => (t1, t2, t3)
+                    // Direct lookup into the pre-difined fixed tables, vanilla lookup of
+                    // Halo2.
+                    self.fixed_tables
+                        .get(tag)
+                        .expect(&format!(
+                            "Fixed table tag {:?} not provided for lookup data",
+                            tag
+                        ))
+                        .clone()
+                } else {
+                    // (v1, v2, v3) => cond * (t1, t2, t3)
+                    // Applies condition to the advice values stored at configuration time
+                    self.dynamic_table_merged(*tag)
+                };
+                if compressed {
+                    let challenge = self.lookup_challenge.clone().unwrap();
+                    table = vec![rlc::expr(&table, challenge)];
+                }
+                // Apply the conditions added from popping regions
+                let mut values: Vec<_> = values
+                    .iter()
+                    .map(|value| value.expr() * regional_condition.clone())
+                    .collect();
+                // align the length of values and table
+                assert!(table.len() >= values.len());
+                while values.len() < table.len() {
+                    values.push(0.expr());
+                }
+                meta.lookup_any(description, |_meta| {
+                    values
+                        .iter()
+                        .zip(table.iter())
+                        .map(|(v, t)| (v.expr(), t.expr()))
+                        .collect()
+                });
+            }
+        } 
+    }
+
+
     pub(crate) fn build_lookups(
         &mut self,
         meta: &mut ConstraintSystem<F>,
         cell_managers: &[CellManager<F, C>],
-        fixed_path: &[(C, &dyn LookupTable<F>)],
-        dynamic_path: &[(C, Option<&dyn LookupTable<F>>)],
-    ) {
-        self.build_from_table(meta, cell_managers, fixed_path);
-        self.build_from_data(meta, dynamic_path);
-    }
-
-    pub(crate) fn build_from_table(
-        &self,
-        meta: &mut ConstraintSystem<F>,
-        cell_managers: &[CellManager<F, C>],
-        tables: &[(C, &dyn LookupTable<F>)],
+        tags: &[(C, BuildOptions)],
     ) {
         let challenge = self.lookup_challenge.clone().unwrap();
-        for cm in cell_managers {
-            cm.build_lookups_from_table(meta, tables.clone(), challenge.expr());
+        for (tag, option) in tags {
+            match option {
+                BuildOptions::Fixed => self.build_fixed_path(meta, cell_managers, tag),
+                BuildOptions::Dynamic => self.build_dynamic_path(meta, tag),
+                BuildOptions::Both => {
+                    self.build_fixed_path(meta, cell_managers, tag);
+                    self.build_dynamic_path(meta, tag);
+                },
+            };
         }
     }
 
-    pub(crate) fn build_from_data(
-        &mut self,
-        meta: &mut ConstraintSystem<F>,
-        tables: &[(C, Option<&dyn LookupTable<F>>)],
-    ) {
-        let lookups = self.lookups.clone();
-        for (tag, table) in tables.iter() {
-            if let Some(lookups) = lookups.get(tag) {
-                for data in lookups.iter() {
-                    let LookupData {
-                        description,
-                        values,
-                        compressed,
-                        regional_condition,
-                        to_fixed,
-                        ..
-                    } = data.clone();
-                    let mut table = if to_fixed {
-                        // (v1, v2, v3) => (t1, t2, t3)
-                        // Direct lookup into the pre-difined fixed tables, vanilla lookup of
-                        // Halo2.
-                        table
-                            .expect(&format!(
-                                "Fixed table tag {:?} not provided for lookup data",
-                                tag
-                            ))
-                            .columns()
-                            .iter()
-                            .map(|col| { 
-                                query_expression(meta, |meta| 
-                                    meta.query_any(*col, Rotation(0))
-                                )
-                            })
-                            .collect()
-                    } else {
-                        // (v1, v2, v3) => cond * (t1, t2, t3)
-                        // Applies condition to the advice values stored at configuration time
-                        self.dynamic_table_merged(*tag)
-                    };
-                    if compressed {
-                        let challenge = self.lookup_challenge.clone().unwrap();
-                        table = vec![rlc::expr(&table, challenge)];
-                    }
-                    // Apply the conditions added from popping regions
-                    let mut values: Vec<_> = values
-                        .iter()
-                        .map(|value| value.expr() * regional_condition.clone())
-                        .collect();
-                    // align the length of values and table
-                    assert!(table.len() >= values.len());
-                    while values.len() < table.len() {
-                        values.push(0.expr());
-                    }
-                    meta.lookup_any(description, |_meta| {
-                        values
-                            .iter()
-                            .zip(table.iter())
-                            .map(|(v, t)| (v.expr(), t.expr()))
-                            .collect()
-                    });
-                }
-            } 
-        }
-    }
-
-    pub(crate) fn store_dynamic_table(
+    pub(crate) fn store_table(
         &mut self,
         description: &'static str,
         tag: C,
         values: Vec<Expression<F>>,
         compress: bool,
         reduce: bool,
+        dyn_path: bool,
     ) {
-        let values = match (compress, reduce) {
-            (true, true) => vec![self.local_compression(description, &values, tag, None, true)],
-            (true, false) => vec![self.local_compression(description, &values, tag, None, false)],
-            (false, true) => values
-                .iter()
-                .map(|v| self.local_compression(description, &[v.clone()], tag, None, reduce))
-                .collect(),
-            (false, false) => values
-                .iter()
-                .map(|v| v.expr() * self.get_condition_expr())
-                .collect(),
-        };
-        let data = TableData {
-            regional_condition: 1.expr(),
-            local_condition: self.get_condition_expr(),
-            values,
-            region_id: self.region_id,
-        };
-        if let Some(tables) = self.dynamic_tables.get_mut(&tag) {
-            tables.push(data);
+        let values = self.local_process(description, &values, tag, None, compress, reduce);
+        if dyn_path {
+            let data = TableData {
+                regional_condition: 1.expr(),
+                local_condition: self.get_condition_expr(),
+                values,
+                region_id: self.region_id,
+            };
+            if let Some(tables) = self.dynamic_tables.get_mut(&tag) {
+                tables.push(data);
+            } else {
+                self.dynamic_tables.insert(tag, vec![data]);
+            }
         } else {
-            self.dynamic_tables.insert(tag, vec![data]);
+            self.fixed_tables.insert(tag, values);
         }
     }
 
@@ -500,25 +511,15 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         to_fixed: bool,
         compress: bool,
         reduce: bool,
-        fixed_path: bool,
+        dyn_path: bool,
     ) {
         // Process the value with conpression and reduction flags
         // also apply the local condition
-        let values = match (compress, reduce) {
-            (true, true) => vec![self.local_compression(description, &values, tag, None, true)],
-            (true, false) => vec![self.local_compression(description, &values, tag, None, false)],            (false, true) => values
-                .iter()
-                .map(|v| self.local_compression(description, &[v.clone()], tag, None, reduce))
-                .collect(),
-            (false, false) => values
-                .iter()
-                .map(|v| v.expr() * self.get_condition_expr())
-                .collect(),
-        };
+        let values = self.local_process(description, &values, tag, None, compress, reduce);
         // Incase of fixed_path, =>>
         // Buildig lookup from typed columns -> fixed table
         // no need to store the lookup, also to_fixed flag become useless
-        if !fixed_path {
+        if dyn_path {
             let data = LookupData {
                 description,
                 local_condition: self.get_condition_expr(),
@@ -534,31 +535,48 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
                 self.lookups.insert(tag, vec![data]);
             }
         }
-        
     }
 
-    pub(crate) fn local_compression(
+    pub(crate) fn local_process(
         &mut self,
         name: &str,
         values: &[Expression<F>],
         cell_type: C,
         target_cell: Option<Cell<F>>,
+        compress: bool,
         reduce: bool,
-    ) -> Expression<F> {
+    ) -> Vec<Expression<F> >{
+
         let local_condition = self.get_condition_expr();
         let challenge = self.lookup_challenge.clone().unwrap();
-        let rlc = rlc::expr(&values, challenge) * local_condition;
-        match reduce {
-            true => {
-                let reduced_rlc = self.split_expression("compression", rlc);
-                self.store_expression(
-                    name,
-                    reduced_rlc, 
-                    cell_type, 
-                    target_cell
-                )
-            },
-            false => rlc
+
+        let local_compression = | values: &[Expression<F>]| -> Expression<F> {
+            let rlc = rlc::expr(&values, challenge) * local_condition;
+            match reduce {
+                true => {
+                    let reduced_rlc = self.split_expression("compression", rlc);
+                    self.store_expression(
+                        name,
+                        reduced_rlc, 
+                        cell_type, 
+                        target_cell
+                    )
+                },
+                false => rlc
+            }
+        };
+
+        match (compress, reduce) {
+            (true, true) => vec![local_compression(&values)],
+            (true, false) => vec![local_compression(&values)],            
+            (false, true) => values
+                .iter()
+                .map(|v| local_compression(&values))
+                .collect(),
+            (false, false) => values
+                .iter()
+                .map(|v| v.expr() * local_condition)
+                .collect(),
         }
     }
 
@@ -567,7 +585,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
             .get(&tag)
             .unwrap_or_else(|| panic!("Dynamic table {:?} not found", tag))
             .clone();
-        let table_merger = TabelMerger{
+        let table_merger = TableMerger{
             data,
             _phantom: PhantomData,
         };
@@ -1128,7 +1146,7 @@ macro_rules! _require {
             bool::default(),
             $options.contains(&COMPRESS),
             $options.contains(&REDUCE),
-            true
+            false
         );
     }};
      // Lookup using a tuple
@@ -1141,7 +1159,7 @@ macro_rules! _require {
             bool::default(),
             $options.contains(&COMPRESS),
             $options.contains(&REDUCE),
-            true
+            false
         );
     }};
 
@@ -1161,7 +1179,7 @@ macro_rules! _require {
             $options.contains(&TO_FIX),
             $options.contains(&COMPRESS),
             $options.contains(&REDUCE),
-            false
+            true
         );
     }};
     ($cb:expr, $descr:expr, $values:expr => @$tag:expr, $options:expr) => {{
@@ -1173,7 +1191,7 @@ macro_rules! _require {
             $options.contains(&TO_FIX),
             $options.contains(&COMPRESS),
             $options.contains(&REDUCE),
-            false
+            true
         );
     }};
 
@@ -1189,12 +1207,13 @@ macro_rules! _require {
             stringify!($values),
             ")",
         );
-        $cb.store_dynamic_table(
+        $cb.store_table(
             description,
             $tag,
             $values,
             $options.contains(&COMPRESS),
             $options.contains(&REDUCE),
+            true
         );
     }};
 }
