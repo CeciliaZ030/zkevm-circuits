@@ -210,7 +210,7 @@ impl<F: Field, C: CellType> MemoryBank<F, C> for RwBank<F, C> {
             false, 
             true, 
             true, 
-            true
+            false
         );
     }
 

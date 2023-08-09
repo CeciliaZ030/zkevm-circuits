@@ -207,6 +207,18 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         self.max_global_degree = max_degree;
     }
 
+    pub(crate) fn preload_tables(
+        &mut self, 
+        meta: &mut ConstraintSystem<F>,
+        tables: &[(C, &dyn LookupTable<F>)]
+    ) {
+        query_expression(meta, |meta| {
+            for (tag, table) in tables {
+                self.fixed_tables.insert(tag.clone(), table.table_exprs(meta));
+            }
+        })
+    }
+
     pub(crate) fn push_region(&mut self, region_id: usize) {
         assert!(region_id != 0);
         self.region_id = region_id;

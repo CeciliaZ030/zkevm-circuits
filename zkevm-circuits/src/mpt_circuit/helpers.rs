@@ -19,13 +19,13 @@ use crate::{
         },
         rlp_gadgets::{get_ext_odd_nibble, get_terminal_odd_nibble},
     },
-    util::{Challenges, Expr},
+    util::{Challenges, Expr}, table::LookupTable,
 };
 use eth_types::Field;
 use gadgets::util::{not, or, pow, Scalar};
 use halo2_proofs::{
     circuit::Value,
-    plonk::{Error, Expression, VirtualCells},
+    plonk::{Error, Expression, VirtualCells, ConstraintSystem},
 };
 
 use super::{
@@ -897,6 +897,14 @@ impl<F: Field> MPTConstraintBuilder<F> {
             keccak_r: challenges.clone().unwrap().keccak_input().expr(),
             challenges,
         }
+    }
+
+    pub(crate) fn preload_tables(
+        &mut self, 
+        meta: &mut ConstraintSystem<F>,
+        tables: &[(MptCellType, &dyn LookupTable<F>)]
+    ) {
+        self.base.preload_tables(meta, tables);
     }
 
     pub(crate) fn push_condition(&mut self, condition: Expression<F>) {
