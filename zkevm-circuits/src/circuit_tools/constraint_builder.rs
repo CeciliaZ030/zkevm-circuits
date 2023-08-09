@@ -117,10 +117,10 @@ impl<F: Field, C: CellType> TableMerger<F, C> {
     }
 }
 
-pub enum BuildOptions {
+pub enum BuildOption {
     Fixed,
     Dynamic,
-    Both,
+    Default,
 }
 
 /// Constraint builder
@@ -405,7 +405,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         meta: &mut ConstraintSystem<F>,
         tag: &C
     ){
-        if let Some(lookups) = self.lookups.get(tag) {
+        if let Some(lookups) = self.lookups.clone().get(tag) {
             for data in lookups.iter() {
                 let LookupData {
                     description,
@@ -461,14 +461,14 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         &mut self,
         meta: &mut ConstraintSystem<F>,
         cell_managers: &[CellManager<F, C>],
-        tags: &[(C, BuildOptions)],
+        tags: &[(C, BuildOption)],
     ) {
         let challenge = self.lookup_challenge.clone().unwrap();
         for (tag, option) in tags {
             match option {
-                BuildOptions::Fixed => self.build_fixed_path(meta, cell_managers, tag),
-                BuildOptions::Dynamic => self.build_dynamic_path(meta, tag),
-                BuildOptions::Both => {
+                BuildOption::Fixed => self.build_fixed_path(meta, cell_managers, tag),
+                BuildOption::Dynamic => self.build_dynamic_path(meta, tag),
+                BuildOption::Default => {
                     self.build_fixed_path(meta, cell_managers, tag);
                     self.build_dynamic_path(meta, tag);
                 },
@@ -485,7 +485,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         reduce: bool,
         dyn_path: bool,
     ) {
-        let values = self.local_process(description, &values, tag, None, compress, reduce);
+        let values = self.local_processing(description, &values, tag, None, compress, reduce);
         if dyn_path {
             let data = TableData {
                 regional_condition: 1.expr(),
@@ -515,7 +515,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
     ) {
         // Process the value with conpression and reduction flags
         // also apply the local condition
-        let values = self.local_process(description, &values, tag, None, compress, reduce);
+        let values = self.local_processing(description, &values, tag, None, compress, reduce);
         // Incase of fixed_path, =>>
         // Buildig lookup from typed columns -> fixed table
         // no need to store the lookup, also to_fixed flag become useless
@@ -537,7 +537,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         }
     }
 
-    pub(crate) fn local_process(
+    pub(crate) fn local_processing(
         &mut self,
         name: &str,
         values: &[Expression<F>],
@@ -550,8 +550,8 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         let local_condition = self.get_condition_expr();
         let challenge = self.lookup_challenge.clone().unwrap();
 
-        let local_compression = | values: &[Expression<F>]| -> Expression<F> {
-            let rlc = rlc::expr(&values, challenge) * local_condition;
+        let mut local_compression = | values: &[Expression<F>]| -> Expression<F> {
+            let rlc = rlc::expr(&values, challenge.expr()) * local_condition.expr();
             match reduce {
                 true => {
                     let reduced_rlc = self.split_expression("compression", rlc);
@@ -559,7 +559,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
                         name,
                         reduced_rlc, 
                         cell_type, 
-                        target_cell
+                        target_cell.clone()
                     )
                 },
                 false => rlc
@@ -575,7 +575,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
                 .collect(),
             (false, false) => values
                 .iter()
-                .map(|v| v.expr() * local_condition)
+                .map(|v| v.expr() * local_condition.expr())
                 .collect(),
         }
     }

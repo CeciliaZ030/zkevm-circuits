@@ -40,7 +40,7 @@ use self::{
 };
 use crate::{
     assign, assignf, circuit,
-    circuit_tools::{cached_region::CachedRegion, cell_manager::CellManager, memory::Memory},
+    circuit_tools::{cached_region::CachedRegion, cell_manager::CellManager, memory::Memory, constraint_builder::BuildOption},
     evm_circuit::table::Table,
     mpt_circuit::{
         helpers::{MPTConstraintBuilder, MainRLPGadget, MptCellType},
@@ -366,57 +366,56 @@ impl<F: Field> MPTConfig<F> {
                 meta,
                 &[rlp_cm, state_cm],
                 &[
-                    (MptCellType::Lookup(Table::Keccak), &keccak_table),
-                    (MptCellType::Lookup(Table::Fixed), &fixed_table),
-                    (MptCellType::Lookup(Table::Exp), &mult_table),
-                ],
-                &[
-                    (MptCellType::Lookup(Table::Fixed), Some(&fixed_table)),
+                    (MptCellType::Lookup(Table::Keccak), BuildOption::Default),
+                    (MptCellType::Lookup(Table::Fixed),  BuildOption::Default),
+                    (MptCellType::Lookup(Table::Exp), BuildOption::Default),
                 ],
             );
             memory.build_lookups(meta);
-        } else if disable_lookups == 1 {
-            cb.base.build_lookups(
-                meta,
-                &[rlp_cm, state_cm],
-                &[],
-                &[
-                    (MptCellType::Lookup(Table::Keccak), Some(&keccak_table)),
-                    (MptCellType::Lookup(Table::Fixed), Some(&fixed_table)),
-                ],
-            );
-            memory.build_lookups(meta);
-        } else if disable_lookups == 2 {
-            cb.base.build_lookups(
-                meta,
-                &[rlp_cm, state_cm],
-                &[],
-                &[
-                    (MptCellType::Lookup(Table::Fixed), Some(&fixed_table)),
-                ],
-            );
-            memory.build_lookups(meta);
-        } else if disable_lookups == 3 {
-            cb.base.build_lookups(
-                meta,
-                &[rlp_cm, state_cm],
-                &[],
-                &[
-                    (MptCellType::Lookup(Table::Keccak), Some(&keccak_table)),
-                    (MptCellType::Lookup(Table::Fixed), Some(&fixed_table)),
-                ],
-            );
-        } else if disable_lookups == 4 {
-            cb.base.build_lookups(
-                meta,
-                &[rlp_cm, state_cm],
-                &[],
-                &[
-                    (MptCellType::Lookup(Table::Keccak), Some(&keccak_table)),
-                    (MptCellType::Lookup(Table::Fixed), Some(&fixed_table)),
-                ],
-            );
-        }
+        } 
+        
+        // else if disable_lookups == 1 {
+        //     cb.base.build_lookups(
+        //         meta,
+        //         &[rlp_cm, state_cm],
+        //         &[],
+        //         &[
+        //             (MptCellType::Lookup(Table::Keccak), Some(&keccak_table)),
+        //             (MptCellType::Lookup(Table::Fixed), Some(&fixed_table)),
+        //         ],
+        //     );
+        //     memory.build_lookups(meta);
+        // } else if disable_lookups == 2 {
+        //     cb.base.build_lookups(
+        //         meta,
+        //         &[rlp_cm, state_cm],
+        //         &[],
+        //         &[
+        //             (MptCellType::Lookup(Table::Fixed), Some(&fixed_table)),
+        //         ],
+        //     );
+        //     memory.build_lookups(meta);
+        // } else if disable_lookups == 3 {
+        //     cb.base.build_lookups(
+        //         meta,
+        //         &[rlp_cm, state_cm],
+        //         &[],
+        //         &[
+        //             (MptCellType::Lookup(Table::Keccak), Some(&keccak_table)),
+        //             (MptCellType::Lookup(Table::Fixed), Some(&fixed_table)),
+        //         ],
+        //     );
+        // } else if disable_lookups == 4 {
+        //     cb.base.build_lookups(
+        //         meta,
+        //         &[rlp_cm, state_cm],
+        //         &[],
+        //         &[
+        //             (MptCellType::Lookup(Table::Keccak), Some(&keccak_table)),
+        //             (MptCellType::Lookup(Table::Fixed), Some(&fixed_table)),
+        //         ],
+        //     );
+        // }
 
         println!("max expression degree: {}", meta.degree());
         println!("num lookups: {}", meta.lookups().len());
