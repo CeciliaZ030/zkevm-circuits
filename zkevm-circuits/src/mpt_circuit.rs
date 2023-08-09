@@ -262,7 +262,20 @@ impl<F: Field> MPTConfig<F> {
             50,
         );
         let r = 123456.expr();
-        let mut cb = MPTConstraintBuilder::new(5, Some(challenges.clone()), None, r.expr());
+        let mut cb = MPTConstraintBuilder::new(
+            5, 
+            Some(challenges.clone()), 
+            None, 
+            r.expr()
+        );
+        cb.preload_tables(
+            meta, 
+            &[
+                (MptCellType::Lookup(Table::Keccak), &keccak_table),
+                (MptCellType::Lookup(Table::Fixed), &fixed_table),
+                (MptCellType::Lookup(Table::Keccak), &mult_table)
+            ],
+        );
         let memory = Memory::new(
             &mut cb.base,
             meta,
