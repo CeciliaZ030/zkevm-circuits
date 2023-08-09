@@ -21,7 +21,7 @@ use crate::{
             KeyData, MPTConstraintBuilder, MainData, ParentData, ParentDataWitness, KECCAK,
         },
         param::KEY_LEN_IN_NIBBLES,
-        MPTConfig, MPTContext, MPTState, RlpItemType,
+        MPTConfig, MPTContext, MptMemory, RlpItemType,
     },
     table::MPTProofType,
     witness::MptUpdateRow,
@@ -102,7 +102,6 @@ impl<F: Field> StorageLeafConfig<F> {
                 // Parent data
                 let parent_data = &mut config.parent_data[is_s.idx()];
                 *parent_data = ParentData::load(
-                    "leaf load",
                     cb,
                     &mut ctx.memory[parent_memory(is_s)],
                     0.expr(),
@@ -286,7 +285,7 @@ impl<F: Field> StorageLeafConfig<F> {
         &self,
         region: &mut CachedRegion<'_, '_, F>,
         mpt_config: &MPTConfig<F>,
-        pv: &mut MPTState<F>,
+        memory: &mut MptMemory<F>,
         offset: usize,
         node: &Node,
         rlp_values: &[RLPItemWitness],
@@ -306,7 +305,7 @@ impl<F: Field> StorageLeafConfig<F> {
 
         let main_data =
             self.main_data
-                .witness_load(region, offset, &mut pv.memory[main_memory()], 0)?;
+                .witness_load(region, offset, &mut memory[main_memory()], 0)?;
 
         let mut key_data = vec![KeyDataWitness::default(); 2];
         let mut parent_data = vec![ParentDataWitness::default(); 2];
@@ -316,7 +315,7 @@ impl<F: Field> StorageLeafConfig<F> {
             parent_data[is_s.idx()] = self.parent_data[is_s.idx()].witness_load(
                 region,
                 offset,
-                &mut pv.memory[parent_memory(is_s)],
+                &mut memory[parent_memory(is_s)],
                 0,
             )?;
 
@@ -337,13 +336,13 @@ impl<F: Field> StorageLeafConfig<F> {
             key_data[is_s.idx()] = self.key_data[is_s.idx()].witness_load(
                 region,
                 offset,
-                &mut pv.memory[key_memory(is_s)],
+                &mut memory[key_memory(is_s)],
                 0,
             )?;
             KeyData::witness_store(
                 region,
                 offset,
-                &mut pv.memory[key_memory(is_s)],
+                &mut memory[key_memory(is_s)],
                 F::ZERO,
                 F::ONE,
                 0,
@@ -381,7 +380,7 @@ impl<F: Field> StorageLeafConfig<F> {
             ParentData::witness_store(
                 region,
                 offset,
-                &mut pv.memory[parent_memory(is_s)],
+                &mut memory[parent_memory(is_s)],
                 F::ZERO,
                 true,
                 false,

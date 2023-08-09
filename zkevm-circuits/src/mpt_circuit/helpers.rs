@@ -8,7 +8,7 @@ use crate::{
             RLCableValue, COMPRESS, REDUCE, TO_FIX
         },
         gadgets::{IsEqualGadget, IsZeroGadget, LtGadget},
-        memory::MemoryBank,
+        memory::{RwBank, MemoryBank},
     },
     evm_circuit::table::Table,
     matchw,
@@ -385,9 +385,9 @@ pub(crate) struct KeyDataWitness<F> {
 }
 
 impl<F: Field> KeyData<F> {
-    pub(crate) fn load(
+    pub(crate) fn load<MB: MemoryBank<F, MptCellType>>(
         cb: &mut MPTConstraintBuilder<F>,
-        memory: &mut MemoryBank<F, MptCellType>,
+        memory: &mut MB,
         offset: Expression<F>,
     ) -> Self {
         let key_data = KeyData {
@@ -402,7 +402,6 @@ impl<F: Field> KeyData<F> {
         };
         circuit!([meta, cb.base], {
             memory.load(
-                "key load",
                 &mut cb.base,
                 offset,
                 &[
@@ -421,9 +420,9 @@ impl<F: Field> KeyData<F> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn store(
+    pub(crate) fn store<MB: MemoryBank<F, MptCellType>>(
         cb: &mut MPTConstraintBuilder<F>,
-        memory: &mut MemoryBank<F, MptCellType>,
+        memory: &mut MB,
         rlc: Expression<F>,
         mult: Expression<F>,
         num_nibbles: Expression<F>,
@@ -448,9 +447,9 @@ impl<F: Field> KeyData<F> {
         );
     }
 
-    pub(crate) fn store_defaults(
+    pub(crate) fn store_defaults<MB: MemoryBank<F, MptCellType>>(
         cb: &mut MPTConstraintBuilder<F>,
-        memory: &mut MemoryBank<F, MptCellType>,
+        memory: &mut MB,
     ) {
         memory.store(&mut cb.base, &KeyData::default_values_expr());
     }
@@ -469,10 +468,10 @@ impl<F: Field> KeyData<F> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn witness_store(
+    pub(crate) fn witness_store<MB: MemoryBank<F, MptCellType>>(
         _region: &mut CachedRegion<'_, '_, F>,
         offset: usize,
-        memory: &mut MemoryBank<F, MptCellType>,
+        memory: &mut MB,
         rlc: F,
         mult: F,
         num_nibbles: usize,
@@ -495,11 +494,11 @@ impl<F: Field> KeyData<F> {
         Ok(())
     }
 
-    pub(crate) fn witness_load(
+    pub(crate) fn witness_load<MB: MemoryBank<F, MptCellType>>(
         &self,
         region: &mut CachedRegion<'_, '_, F>,
         offset: usize,
-        memory: &mut MemoryBank<F, MptCellType>,
+        memory: &mut MB,
         load_offset: usize,
     ) -> Result<KeyDataWitness<F>, Error> {
         let values = memory.witness_load(load_offset);
@@ -543,10 +542,9 @@ pub(crate) struct ParentDataWitness<F> {
 }
 
 impl<F: Field> ParentData<F> {
-    pub(crate) fn load(
-        description: &'static str,
+    pub(crate) fn load<MB: MemoryBank<F, MptCellType>>(
         cb: &mut MPTConstraintBuilder<F>,
-        memory: &mut MemoryBank<F, MptCellType>,
+        memory: &mut MB,
         offset: Expression<F>,
     ) -> Self {
         let parent_data = ParentData {
@@ -557,7 +555,6 @@ impl<F: Field> ParentData<F> {
         };
         circuit!([meta, cb.base], {
             memory.load(
-                description,
                 &mut cb.base,
                 offset,
                 &[
@@ -571,9 +568,9 @@ impl<F: Field> ParentData<F> {
         parent_data
     }
 
-    pub(crate) fn store(
+    pub(crate) fn store<MB: MemoryBank<F, MptCellType>>(
         cb: &mut MPTConstraintBuilder<F>,
-        memory: &mut MemoryBank<F, MptCellType>,
+        memory: &mut MB,
         rlc: Expression<F>,
         is_root: Expression<F>,
         is_placeholder: Expression<F>,
@@ -585,10 +582,10 @@ impl<F: Field> ParentData<F> {
         );
     }
 
-    pub(crate) fn witness_store(
+    pub(crate) fn witness_store<MB: MemoryBank<F, MptCellType>>(
         _region: &mut CachedRegion<'_, '_, F>,
         offset: usize,
-        memory: &mut MemoryBank<F, MptCellType>,
+        memory: &mut MB,
         rlc: F,
         force_hashed: bool,
         is_placeholder: bool,
@@ -606,11 +603,11 @@ impl<F: Field> ParentData<F> {
         Ok(())
     }
 
-    pub(crate) fn witness_load(
+    pub(crate) fn witness_load<MB: MemoryBank<F, MptCellType>>(
         &self,
         region: &mut CachedRegion<'_, '_, F>,
         offset: usize,
-        memory: &mut MemoryBank<F, MptCellType>,
+        memory: &mut MB,
         load_offset: usize,
     ) -> Result<ParentDataWitness<F>, Error> {
         let values = memory.witness_load(load_offset);
@@ -650,10 +647,10 @@ pub(crate) struct MainDataWitness<F> {
 }
 
 impl<F: Field> MainData<F> {
-    pub(crate) fn load(
+    pub(crate) fn load<MB: MemoryBank<F, MptCellType>>(
         description: &'static str,
         cb: &mut MPTConstraintBuilder<F>,
-        memory: &mut MemoryBank<F, MptCellType>,
+        memory: &mut MB,
         offset: Expression<F>,
     ) -> Self {
         let main_data = MainData {
@@ -666,7 +663,6 @@ impl<F: Field> MainData<F> {
         };
         circuit!([meta, cb.base], {
             memory.load(
-                description,
                 &mut cb.base,
                 offset,
                 &[
@@ -682,19 +678,19 @@ impl<F: Field> MainData<F> {
         main_data
     }
 
-    pub(crate) fn store(
+    pub(crate) fn store<MB: MemoryBank<F, MptCellType>>(
         cb: &mut MPTConstraintBuilder<F>,
-        memory: &mut MemoryBank<F, MptCellType>,
+        memory: &mut MB,
         values: [Expression<F>; 6],
     ) {
         memory.store(&mut cb.base, &values);
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn witness_store(
+    pub(crate) fn witness_store<MB: MemoryBank<F, MptCellType>>(
         _region: &mut CachedRegion<'_, '_, F>,
         offset: usize,
-        memory: &mut MemoryBank<F, MptCellType>,
+        memory: &mut MB,
         proof_type: usize,
         is_below_account: bool,
         is_non_existing_account: F,
@@ -715,11 +711,11 @@ impl<F: Field> MainData<F> {
         Ok(())
     }
 
-    pub(crate) fn witness_load(
+    pub(crate) fn witness_load<MB: MemoryBank<F, MptCellType>>(
         &self,
         region: &mut CachedRegion<'_, '_, F>,
         offset: usize,
-        memory: &mut MemoryBank<F, MptCellType>,
+        memory: &mut MB,
         load_offset: usize,
     ) -> Result<MainDataWitness<F>, Error> {
         let values = memory.witness_load(load_offset);

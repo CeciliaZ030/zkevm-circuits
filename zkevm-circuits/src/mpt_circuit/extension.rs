@@ -21,7 +21,7 @@ use crate::{
             FIXED, KECCAK,
         },
         param::HASH_WIDTH,
-        FixedTableTag, MPTConfig, MPTState, RlpItemType,
+        FixedTableTag, MPTConfig, MptMemory, RlpItemType,
     },
 };
 
@@ -209,7 +209,7 @@ impl<F: Field> ExtensionGadget<F> {
         &self,
         region: &mut CachedRegion<'_, '_, F>,
         _mpt_config: &MPTConfig<F>,
-        _pv: &mut MPTState<F>,
+        _memory: &mut MptMemory<F>,
         offset: usize,
         key_data: &KeyDataWitness<F>,
         key_rlc: &mut F,

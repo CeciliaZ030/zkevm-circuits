@@ -11,7 +11,7 @@ use crate::{
             key_memory, main_memory, parent_memory, KeyData, MPTConstraintBuilder, MainData,
             ParentData,
         },
-        MPTConfig, MPTContext, MPTState, RlpItemType,
+        MPTConfig, MPTContext, MptMemory, RlpItemType,
     },
 };
 use eth_types::Field;
@@ -83,7 +83,7 @@ impl<F: Field> StartConfig<F> {
         &self,
         region: &mut CachedRegion<'_, '_, F>,
         _mpt_config: &MPTConfig<F>,
-        pv: &mut MPTState<F>,
+        memory: &mut MptMemory<F>,
         offset: usize,
         node: &Node,
         rlp_values: &[RLPItemWitness],
@@ -106,7 +106,7 @@ impl<F: Field> StartConfig<F> {
         MainData::witness_store(
             region,
             offset,
-            &mut pv.memory[main_memory()],
+            &mut memory[main_memory()],
             start.proof_type as usize,
             false,
             false.scalar(),
@@ -119,7 +119,7 @@ impl<F: Field> StartConfig<F> {
             ParentData::witness_store(
                 region,
                 offset,
-                &mut pv.memory[parent_memory(is_s)],
+                &mut memory[parent_memory(is_s)],
                 root[is_s.idx()],
                 true,
                 false,
@@ -128,7 +128,7 @@ impl<F: Field> StartConfig<F> {
             KeyData::witness_store(
                 region,
                 offset,
-                &mut pv.memory[key_memory(is_s)],
+                &mut memory[key_memory(is_s)],
                 F::ZERO,
                 F::ONE,
                 0,

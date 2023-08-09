@@ -25,7 +25,7 @@ use crate::{
             IsEmptyTreeGadget, KeyData, MPTConstraintBuilder, ParentData, WrongGadget, KECCAK,
         },
         param::{KEY_LEN_IN_NIBBLES, RLP_LIST_LONG, RLP_LONG},
-        MPTConfig, MPTContext, MPTState, RlpItemType,
+        MPTConfig, MPTContext, MptMemory, RlpItemType,
     },
     table::MPTProofType,
     witness::MptUpdateRow,
@@ -153,7 +153,6 @@ impl<F: Field> AccountLeafConfig<F> {
                 // Parent data
                 let parent_data = &mut config.parent_data[is_s.idx()];
                 *parent_data = ParentData::load(
-                    "account load",
                     cb,
                     &mut ctx.memory[parent_memory(is_s)],
                     0.expr(),
@@ -405,7 +404,7 @@ impl<F: Field> AccountLeafConfig<F> {
         &self,
         region: &mut CachedRegion<'_, '_, F>,
         mpt_config: &MPTConfig<F>,
-        pv: &mut MPTState<F>,
+        memory: &mut MptMemory<F>,
         offset: usize,
         node: &Node,
         rlp_values: &[RLPItemWitness],
@@ -437,7 +436,7 @@ impl<F: Field> AccountLeafConfig<F> {
 
         let main_data =
             self.main_data
-                .witness_load(region, offset, &mut pv.memory[main_memory()], 0)?;
+                .witness_load(region, offset, &mut memory[main_memory()], 0)?;
 
         // Key
         let mut key_rlc = vec![0.scalar(); 2];
@@ -465,14 +464,14 @@ impl<F: Field> AccountLeafConfig<F> {
             key_data[is_s.idx()] = self.key_data[is_s.idx()].witness_load(
                 region,
                 offset,
-                &mut pv.memory[key_memory(is_s)],
+                &mut memory[key_memory(is_s)],
                 0,
             )?;
 
             parent_data[is_s.idx()] = self.parent_data[is_s.idx()].witness_load(
                 region,
                 offset,
-                &mut pv.memory[parent_memory(is_s)],
+                &mut memory[parent_memory(is_s)],
                 0,
             )?;
 
@@ -507,7 +506,7 @@ impl<F: Field> AccountLeafConfig<F> {
             KeyData::witness_store(
                 region,
                 offset,
-                &mut pv.memory[key_memory(is_s)],
+                &mut memory[key_memory(is_s)],
                 F::ZERO,
                 F::ONE,
                 0,
@@ -518,7 +517,7 @@ impl<F: Field> AccountLeafConfig<F> {
             ParentData::witness_store(
                 region,
                 offset,
-                &mut pv.memory[parent_memory(is_s)],
+                &mut memory[parent_memory(is_s)],
                 storage_rlc[is_s.idx()],
                 true,
                 false,
@@ -590,7 +589,7 @@ impl<F: Field> AccountLeafConfig<F> {
         MainData::witness_store(
             region,
             offset,
-            &mut pv.memory[main_memory()],
+            &mut memory[main_memory()],
             main_data.proof_type,
             true,
             is_non_existing_account,

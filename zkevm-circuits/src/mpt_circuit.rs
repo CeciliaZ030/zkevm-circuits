@@ -40,7 +40,7 @@ use self::{
 };
 use crate::{
     assign, assignf, circuit,
-    circuit_tools::{cached_region::CachedRegion, cell_manager::CellManager, memory::Memory, constraint_builder::BuildOption},
+    circuit_tools::{cached_region::CachedRegion, cell_manager::CellManager, memory::{Memory, RwBank}, constraint_builder::BuildOption},
     evm_circuit::table::Table,
     mpt_circuit::{
         helpers::{MPTConstraintBuilder, MainRLPGadget, MptCellType},
@@ -126,12 +126,14 @@ impl<F: Field> StateMachineConfig<F> {
     }
 }
 
+type MptMemory<F: Field> = Memory<F, MptCellType, RwBank<F, MptCellType>>;
+
 /// Merkle Patricia Trie context
 #[derive(Clone, Debug)]
-pub struct MPTContext<F> {
+pub struct MPTContext<F: Field> {
     pub(crate) mpt_table: MptTable,
     pub(crate) rlp_item: MainRLPGadget<F>,
-    pub(crate) memory: Memory<F, MptCellType>,
+    pub(crate) memory: MptMemory<F>,
 }
 
 /// RLP item type
@@ -163,11 +165,11 @@ impl<F: Field> MPTContext<F> {
 
 /// Merkle Patricia Trie config.
 #[derive(Clone)]
-pub struct MPTConfig<F> {
+pub struct MPTConfig<F: Field> {
     pub(crate) q_enable: Column<Fixed>,
     pub(crate) q_first: Column<Fixed>,
     pub(crate) q_last: Column<Fixed>,
-    pub(crate) memory: Memory<F, MptCellType>,
+    pub(crate) memory: MptMemory<F>,
     pub(crate) mpt_table: MptTable,
     keccak_table: KeccakTable,
     fixed_table: [Column<Fixed>; 6],
@@ -200,18 +202,6 @@ pub enum FixedTableTag {
 }
 impl_expr!(FixedTableTag);
 
-#[derive(Default)]
-pub(crate) struct MPTState<F> {
-    pub(crate) memory: Memory<F, MptCellType>,
-}
-
-impl<F: Field> MPTState<F> {
-    fn new(memory: &Memory<F, MptCellType>) -> Self {
-        Self {
-            memory: memory.clone(),
-        }
-    }
-}
 
 impl<F: Field> MPTConfig<F> {
     /// Configure MPT Circuit
@@ -241,24 +231,6 @@ impl<F: Field> MPTConfig<F> {
 
         let mut state_machine = StateMachineConfig::construct(meta);
         let mut rlp_item = MainRLPGadget::default();
-        let memory = Memory::new(
-            meta,
-            vec![
-                (MptCellType::MemKeyC, 3),
-                (MptCellType::MemKeyS, 3),
-                (MptCellType::MemParentC, 3),
-                (MptCellType::MemParentS, 3),
-                (MptCellType::MemMain, 3),
-            ],
-            0,
-            50,
-        );
-
-        let mut ctx = MPTContext {
-            mpt_table,
-            rlp_item: rlp_item.clone(),
-            memory: memory.clone(),
-        };
 
         let rlp_cm = CellManager::new(
             meta,
@@ -291,6 +263,23 @@ impl<F: Field> MPTConfig<F> {
         );
         let r = 123456.expr();
         let mut cb = MPTConstraintBuilder::new(5, Some(challenges.clone()), None, r.expr());
+        let memory = Memory::new(
+            &mut cb.base,
+            meta,
+            vec![
+                (MptCellType::MemKeyC, 3),
+                (MptCellType::MemKeyS, 3),
+                (MptCellType::MemParentC, 3),
+                (MptCellType::MemParentS, 3),
+                (MptCellType::MemMain, 3),
+            ],
+            0,
+        );
+        let mut ctx = MPTContext {
+            mpt_table,
+            rlp_item: rlp_item.clone(),
+            memory: memory.clone(),
+        };
         meta.create_gate("MPT", |meta| {
             circuit!([meta, cb], {
                 ifx!{f!(q_enable) => {
@@ -369,9 +358,13 @@ impl<F: Field> MPTConfig<F> {
                     (MptCellType::Lookup(Table::Keccak), BuildOption::Default),
                     (MptCellType::Lookup(Table::Fixed),  BuildOption::Default),
                     (MptCellType::Lookup(Table::Exp), BuildOption::Default),
+                    (MptCellType::MemKeyC, BuildOption::Fixed),
+                    (MptCellType::MemKeyS,  BuildOption::Fixed),
+                    (MptCellType::MemParentC,  BuildOption::Fixed),
+                    (MptCellType::MemParentS,  BuildOption::Fixed),
+                    (MptCellType::MemMain,  BuildOption::Fixed),
                 ],
             );
-            memory.build_lookups(meta);
         } 
         
         // else if disable_lookups == 1 {
@@ -454,9 +447,9 @@ impl<F: Field> MPTConfig<F> {
                 let mut keccak_r = F::ZERO;
                 challenges.keccak_input().map(|v| keccak_r = v);
 
-                let mut pv = MPTState::new(&self.memory);
+                let mut memory = self.memory.clone();
 
-                let mut offset = 0;
+                let mut offset = 0; 
                 for node in nodes.iter() {
                     //println!("offset: {}", offset);
                     let mut cached_region = CachedRegion::new(
@@ -500,7 +493,7 @@ impl<F: Field> MPTConfig<F> {
                         self.state_machine.start_config.assign(
                             &mut cached_region,
                             self,
-                            &mut pv,
+                            &mut memory,
                             offset,
                             node,
                             &rlp_values,
@@ -513,7 +506,7 @@ impl<F: Field> MPTConfig<F> {
                         self.state_machine.branch_config.assign(
                             &mut cached_region,
                             self,
-                            &mut pv,
+                            &mut memory,
                             offset,
                             node,
                             &rlp_values,
@@ -526,7 +519,7 @@ impl<F: Field> MPTConfig<F> {
                         self.state_machine.account_config.assign(
                             &mut cached_region,
                             self,
-                            &mut pv,
+                            &mut memory,
                             offset,
                             node,
                             &rlp_values,
@@ -539,7 +532,7 @@ impl<F: Field> MPTConfig<F> {
                         self.state_machine.storage_config.assign(
                             &mut cached_region,
                             self,
-                            &mut pv,
+                            &mut memory,
                             offset,
                             node,
                             &rlp_values,
@@ -549,7 +542,7 @@ impl<F: Field> MPTConfig<F> {
 
                     offset += node.values.len();
 
-                    pv.memory.assign(&mut cached_region, offset)?;
+                    memory.assign(&mut cached_region, offset)?;
 
                     cached_region.assign_stored_expressions(&self.cb.base, challenges)?;
                 }
