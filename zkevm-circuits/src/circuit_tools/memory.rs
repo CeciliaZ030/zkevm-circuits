@@ -1,15 +1,14 @@
 //! Memory
 use crate::{
-    evm_circuit::util::{rlc},
     util::{query_expression, Expr},
 };
-use eth_types::{Field, Hash};
+use eth_types::{Field};
 use halo2_proofs::{
     circuit::Value,
     plonk::{
-        Advice, Column, ConstraintSystem, Error, Expression, FirstPhase, SecondPhase, ThirdPhase,
+        Advice, Column, ConstraintSystem, Error, Expression,
     },
-    poly::Rotation, dev::metadata::VirtualCell,
+    poly::Rotation,
 };
 use itertools::Itertools;
 use std::{
@@ -19,7 +18,7 @@ use std::{
 
 use super::{
     cached_region::CachedRegion,
-    cell_manager::{Cell, CellType, CellConfig, CellManager},
+    cell_manager::{CellType, CellManager},
     constraint_builder::ConstraintBuilder,
 };
 

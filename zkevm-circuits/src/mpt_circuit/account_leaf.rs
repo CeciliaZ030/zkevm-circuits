@@ -132,7 +132,7 @@ impl<F: Field> AccountLeafConfig<F> {
                 ctx.rlp_item(meta, cb, AccountRowType::Wrong as usize, RlpItemType::Key);
 
             config.main_data =
-                MainData::load("main storage", cb, &mut ctx.memory[main_memory()], 0.expr());
+                MainData::load(cb, &mut ctx.memory[main_memory()], 0.expr());
 
             // Don't allow an account node to follow an account node
             require!(config.main_data.is_below_account => false);

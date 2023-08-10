@@ -8,7 +8,7 @@ use crate::{
             RLCableValue, COMPRESS, REDUCE, TO_FIX
         },
         gadgets::{IsEqualGadget, IsZeroGadget, LtGadget},
-        memory::{RwBank, MemoryBank},
+        memory::{MemoryBank},
     },
     evm_circuit::table::Table,
     matchw,
@@ -654,7 +654,6 @@ pub(crate) struct MainDataWitness<F> {
 
 impl<F: Field> MainData<F> {
     pub(crate) fn load<MB: MemoryBank<F, MptCellType>>(
-        description: &'static str,
         cb: &mut MPTConstraintBuilder<F>,
         memory: &mut MB,
         offset: Expression<F>,

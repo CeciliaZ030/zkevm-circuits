@@ -10,7 +10,6 @@ use eth_types::Field;
 use gadgets::util::{and, sum, Scalar};
 use halo2_proofs::{
     plonk::{ConstraintSystem, Expression},
-    poly::Rotation,
 };
 use itertools::Itertools;
 
@@ -400,7 +399,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
             let table_expr = rlc::expr(&table, challenge.expr());
             for cm in cell_managers {
                 for col in cm.get_typed_columns(*data_tag) {
-                    meta.lookup_any(format!("{:?}", data_tag), |meta| {
+                    meta.lookup_any(format!("{:?}", data_tag), |_meta| {
                         vec![(col.expr(), table_expr.clone())]
                     });
                 }
@@ -472,7 +471,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         cell_managers: &[CellManager<F, C>],
         tags: &[(C, C)],
     ) {
-        let challenge = self.lookup_challenge.clone().unwrap();
+        let _challenge = self.lookup_challenge.clone().unwrap();
         for tag in tags {
             self.build_fixed_path(meta, cell_managers, tag);
             self.build_dynamic_path(meta, tag);
@@ -574,7 +573,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
             (true, false) => vec![local_compression(&values)],            
             (false, true) => values
                 .iter()
-                .map(|v| local_compression(&values))
+                .map(|_v| local_compression(&values))
                 .collect(),
             (false, false) => values
                 .iter()

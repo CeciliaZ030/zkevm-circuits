@@ -126,7 +126,7 @@ impl<F: Field> StateMachineConfig<F> {
     }
 }
 
-type MptMemory<F: Field> = Memory<F, MptCellType, RwBank<F, MptCellType>>;
+type MptMemory<F> = Memory<F, MptCellType, RwBank<F, MptCellType>>;
 
 /// Merkle Patricia Trie context
 #[derive(Clone, Debug)]
