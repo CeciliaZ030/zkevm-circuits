@@ -392,7 +392,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         &mut self,
         meta: &mut ConstraintSystem<F>,
         cell_managers: &[CellManager<F, C>],
-        tag: (&C, &C)
+        tag:&(C, C)
     ){
         let (data_tag, table_tag) = tag;
         let challenge = self.lookup_challenge.clone().unwrap();
@@ -412,9 +412,10 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
     pub(crate) fn build_dynamic_path(
         &mut self,
         meta: &mut ConstraintSystem<F>,
-        tag: &C
+        tag: &(C, C)
     ){
-        if let Some(lookups) = self.lookups.clone().get(tag) {
+        let (data_tag, table_tag) = tag;
+        if let Some(lookups) = self.lookups.clone().get(data_tag) {
             for data in lookups.iter() {
                 let LookupData {
                     description,
@@ -430,17 +431,17 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
                     // Direct lookup into the pre-difined fixed tables, vanilla lookup of
                     // Halo2.
                     self.fixed_tables
-                        .get(tag)
+                        .get(table_tag)
                         .expect(&format!(
                             "Fixed table tag {:?} not provided for lookup data",
-                            tag
+                            table_tag
                         ))
                         .clone()
                 } else {
                     println!("dyn to dyn: {:?}", data.description);
                     // (v1, v2, v3) => cond * (t1, t2, t3)
                     // Applies condition to the advice values stored at configuration time
-                    self.dynamic_table_merged(*tag)
+                    self.dynamic_table_merged(*table_tag)
                 };
                 if compressed {
                     let challenge = self.lookup_challenge.clone().unwrap();
@@ -475,10 +476,10 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         tags: &[(C, C)],
     ) {
         let challenge = self.lookup_challenge.clone().unwrap();
-        for (data_tag, table_tag) in tags {
-            println!("------- {:?} -------", data_tag);
-            self.build_fixed_path(meta, cell_managers,(data_tag, table_tag));
-            self.build_dynamic_path(meta, data_tag);
+        for tag in tags {
+            println!("------- {:?} -------", tag.0);
+            self.build_fixed_path(meta, cell_managers, tag);
+            self.build_dynamic_path(meta, tag);
         }
     }
 
@@ -1223,6 +1224,24 @@ macro_rules! _require {
             true
         );
     }};
+    // Put values in a lookup table using a tuple
+    ($cb:expr, @$tag:expr, $options:expr =>> $values:expr) => {{
+        let description = concat_with_preamble!(
+            "@",
+            stringify!($tag),
+            " => (",
+            stringify!($values),
+            ")",
+        );
+        $cb.store_table(
+            description,
+            $tag,
+            $values,
+            $options.contains(&COMPRESS),
+            $options.contains(&REDUCE),
+            false
+        );
+    }};
 }
 
 /// matchx
@@ -1534,7 +1553,16 @@ macro_rules! circuit {
                     let options = Vec::new();
                     _require!($cb, @$tag, options => values);
                 }};
-
+                (@$tag:expr, $options:tt =>> $values:tt) => {{
+                    let values = _to_values_vec!($values);
+                    let options = _to_options_vec!($options);
+                    _require!($cb, @$tag, options =>> values);
+                }};
+                (@$tag:expr =>> $values:tt) => {{
+                    let values = _to_values_vec!($values);
+                    let options = Vec::new();
+                    _require!($cb, @$tag, options =>> values);
+                }};
 
             }
 

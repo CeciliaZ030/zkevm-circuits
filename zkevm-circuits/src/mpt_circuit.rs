@@ -369,7 +369,7 @@ impl<F: Field> MPTConfig<F> {
                 &[rlp_cm, state_cm],
                 &[
                     (MptCellType::Lookup(Table::Keccak), MptCellType::Lookup(Table::Keccak)),
-                    (MptCellType::Lookup(Table::Fixed), MptCellType::Lookup(Table::Fixed),),
+                    (MptCellType::Lookup(Table::Fixed), MptCellType::Lookup(Table::Fixed)),
                     (MptCellType::Lookup(Table::Exp), MptCellType::Lookup(Table::Exp)),
                     (MptCellType::MemKeyC, MptCellType::MemKeyC_),
                     (MptCellType::MemKeyS, MptCellType::MemKeyS_),

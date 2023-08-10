@@ -63,10 +63,10 @@ impl<F: Field, C: CellType, MB: MemoryBank<F, C>> Memory<F, C, MB> {
         let mut banks = HashMap::new();
         tags
             .into_iter()
-            .for_each(|(tag, table_tag, phase)| {
+            .for_each(|(data_tag, table_tag, phase)| {
                 banks.insert(
-                    tag, 
-                    MB::new(meta, cm, tag, table_tag, phase, offset)
+                    data_tag, 
+                    MB::new(meta, cm, (data_tag, table_tag), phase, offset)
                 );
             });
         Self { 
@@ -106,17 +106,17 @@ impl<F: Field, C: CellType, MB: MemoryBank<F, C>> Memory<F, C, MB> {
     }
 
     pub(crate) fn tags(&self) -> Vec<C> {
-        self.banks.iter().map(|(_, bank)| bank.tag()).collect()
+        self.banks.iter().map(|(_, bank)| bank.tag().0).collect()
     }
 }
 
 
 pub(crate) trait MemoryBank<F: Field, C: CellType>: Clone {
-    fn new(meta: &mut ConstraintSystem<F>, cm: &mut CellManager<F, C>, tag: C, table_tag: C,  phase: u8, offset: usize) -> Self;
+    fn new(meta: &mut ConstraintSystem<F>, cm: &mut CellManager<F, C>, tag: (C, C), phase: u8, offset: usize) -> Self;
     fn store(&mut self, cb: &mut ConstraintBuilder<F, C>, values: &[Expression<F>]) -> Expression<F>;
     fn load(&mut self, cb: &mut ConstraintBuilder<F, C>, load_offset: Expression<F>, values: &[Expression<F>]);
     fn columns(&self) -> Vec<Column<Advice>>;
-    fn tag(&self) -> C;
+    fn tag(&self) -> (C, C);
     fn witness_store(&mut self, offset: usize, values: &[F]);
     fn witness_load(&self, offset: usize) -> Vec<F>;
     fn build_constraints(&self, cb: &mut ConstraintBuilder<F, C>, q_start: Expression<F>);
@@ -125,8 +125,7 @@ pub(crate) trait MemoryBank<F: Field, C: CellType>: Clone {
 
 #[derive(Clone, Debug)]
 pub(crate) struct RwBank<F, C> {
-    tag: C,
-    table_tag: C,
+    tag: (C, C),
     key: Column<Advice>,
     reads: Column<Advice>,
     writes: Column<Advice>,
@@ -152,15 +151,16 @@ impl<F: Field, C: CellType> MemoryBank<F, C> for RwBank<F, C> {
     fn new(
         meta: &mut ConstraintSystem<F>,
         cm: &mut CellManager<F, C>, 
-        tag: C,
-        table_tag: C,
+        tag: (C, C),
         phase: u8,
         offset: usize,
     ) -> Self {
-        let config = (tag, 1, phase, false);
-        cm.add_celltype(meta, config, offset);
-        let table_config = (table_tag, 1, phase, false);
-        cm.add_celltype(meta, table_config, offset);
+        let rw: Vec<Column<Advice>> = [tag.0, tag.1].iter()
+            .map(|t| {
+                let config = (t.clone(), 1usize, phase, false);
+                cm.add_celltype(meta, config, offset);
+                cm.get_typed_columns(t.clone())[0].column
+            }).collect();
         let key = meta.advice_column();
         let (cur, next) = query_expression(meta, |meta| {
             (
@@ -170,10 +170,9 @@ impl<F: Field, C: CellType> MemoryBank<F, C> for RwBank<F, C> {
         });
         Self { 
             tag, 
-            table_tag, 
             key, 
-            reads: cm.get_typed_columns(tag)[0].column, 
-            writes: cm.get_typed_columns(table_tag)[0].column, 
+            reads: rw[0], 
+            writes: rw[1], 
             store_offsets: Vec::new(), 
             stored_values: Vec::new(), 
             cur,
@@ -189,8 +188,8 @@ impl<F: Field, C: CellType> MemoryBank<F, C> for RwBank<F, C> {
     ) -> Expression<F> {
         let values = self.prepend_key(values);
         cb.store_table(
-            Box::leak(format!("{:?} store", self.table_tag).into_boxed_str()),
-            self.table_tag, 
+            Box::leak(format!("{:?} store", self.tag.1).into_boxed_str()),
+            self.tag.1, 
             values.clone(), 
             true, 
             true, 
@@ -208,8 +207,8 @@ impl<F: Field, C: CellType> MemoryBank<F, C> for RwBank<F, C> {
     ) {
         let values = self.prepend_offset(values, load_offset);
         cb.add_lookup(
-            Box::leak(format!("{:?} load", self.tag).into_boxed_str()), 
-            self.tag, 
+            Box::leak(format!("{:?} load", self.tag.0).into_boxed_str()), 
+            self.tag.0, 
             values, 
             false, 
             true, 
@@ -218,7 +217,7 @@ impl<F: Field, C: CellType> MemoryBank<F, C> for RwBank<F, C> {
         );
     }
 
-    fn tag(&self) -> C {
+    fn tag(&self) -> (C, C) {
         self.tag
     }
 
