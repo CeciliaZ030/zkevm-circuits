@@ -268,6 +268,10 @@ impl<F: Field> MPTConfig<F> {
             None, 
             r.expr()
         );
+        // Note(Cecilia): can also do this to achieve the equivalant effect:
+        //      require!(@KECCAK => (a, b, c))
+        // To directly rlc table into a colum, do this:
+        //  require!(@KECCAK, (COMPRESS, REDUCE) =>> (a, b, c))
         cb.preload_tables(
             meta, 
             &[
@@ -368,9 +372,14 @@ impl<F: Field> MPTConfig<F> {
                 meta,
                 &[rlp_cm, state_cm],
                 &[
+                    // dyn data =>> fixed table
                     (MptCellType::Lookup(Table::Keccak), MptCellType::Lookup(Table::Keccak)),
+                    // dyn data =>> fixed table & dyn data => fixed table
                     (MptCellType::Lookup(Table::Fixed), MptCellType::Lookup(Table::Fixed)),
+                    // dyn data =>> fixed table
                     (MptCellType::Lookup(Table::Exp), MptCellType::Lookup(Table::Exp)),
+                    // dyn data =>> dyn table
+                    // dyn data rlc into col and dyn table rlc into col needs two tags to identify
                     (MptCellType::MemKeyC, MptCellType::MemKeyC_),
                     (MptCellType::MemKeyS, MptCellType::MemKeyS_),
                     (MptCellType::MemParentC, MptCellType::MemParentC_),
