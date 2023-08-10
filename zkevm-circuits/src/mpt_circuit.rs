@@ -246,7 +246,7 @@ impl<F: Field> MPTConfig<F> {
             0,
             1,
         );
-        let state_cm = CellManager::new(
+        let mut state_cm = CellManager::new(
             meta,
             // Type, #cols, phase, permutable
             vec![
@@ -273,18 +273,18 @@ impl<F: Field> MPTConfig<F> {
             &[
                 (MptCellType::Lookup(Table::Keccak), &keccak_table),
                 (MptCellType::Lookup(Table::Fixed), &fixed_table),
-                (MptCellType::Lookup(Table::Keccak), &mult_table)
+                (MptCellType::Lookup(Table::Exp), &mult_table)
             ],
         );
         let memory = Memory::new(
-            &mut cb.base,
+            &mut state_cm,
             meta,
             vec![
-                (MptCellType::MemKeyC, 3),
-                (MptCellType::MemKeyS, 3),
-                (MptCellType::MemParentC, 3),
-                (MptCellType::MemParentS, 3),
-                (MptCellType::MemMain, 3),
+                (MptCellType::MemKeyC, MptCellType::MemKeyC_,  3),
+                (MptCellType::MemKeyS, MptCellType::MemKeyS_, 3),
+                (MptCellType::MemParentC, MptCellType::MemParentC_, 3),
+                (MptCellType::MemParentS, MptCellType::MemParentS_, 3),
+                (MptCellType::MemMain, MptCellType::MemMain_, 3),
             ],
             0,
         );
@@ -368,14 +368,14 @@ impl<F: Field> MPTConfig<F> {
                 meta,
                 &[rlp_cm, state_cm],
                 &[
-                    (MptCellType::Lookup(Table::Keccak), BuildOption::Default),
-                    (MptCellType::Lookup(Table::Fixed),  BuildOption::Default),
-                    (MptCellType::Lookup(Table::Exp), BuildOption::Default),
-                    (MptCellType::MemKeyC, BuildOption::Fixed),
-                    (MptCellType::MemKeyS,  BuildOption::Fixed),
-                    (MptCellType::MemParentC,  BuildOption::Fixed),
-                    (MptCellType::MemParentS,  BuildOption::Fixed),
-                    (MptCellType::MemMain,  BuildOption::Fixed),
+                    (MptCellType::Lookup(Table::Keccak), MptCellType::Lookup(Table::Keccak), BuildOption::Default),
+                    (MptCellType::Lookup(Table::Fixed), MptCellType::Lookup(Table::Fixed),  BuildOption::Default),
+                    (MptCellType::Lookup(Table::Exp), MptCellType::Lookup(Table::Exp), BuildOption::Default),
+                    (MptCellType::MemKeyC, MptCellType::MemKeyC_, BuildOption::Fixed),
+                    (MptCellType::MemKeyS, MptCellType::MemKeyS_,  BuildOption::Fixed),
+                    (MptCellType::MemParentC, MptCellType::MemParentC_,  BuildOption::Fixed),
+                    (MptCellType::MemParentS, MptCellType::MemParentS_,  BuildOption::Fixed),
+                    (MptCellType::MemMain, MptCellType::MemMain_,  BuildOption::Fixed),
                 ],
             );
         } 

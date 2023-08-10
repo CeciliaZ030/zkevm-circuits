@@ -55,18 +55,18 @@ impl<F: Field, C: CellType, MB: MemoryBank<F, C>> IndexMut<C> for Memory<F, C, M
 
 impl<F: Field, C: CellType, MB: MemoryBank<F, C>> Memory<F, C, MB> {
     pub(crate) fn new(
-        cb: &mut ConstraintBuilder<F, C>,
+        cm: &mut CellManager<F, C>, 
         meta: &mut ConstraintSystem<F>,
-        tags: Vec<(C, u8)>,
+        tags: Vec<(C, C, u8)>,
         offset: usize,
     ) -> Self {
         let mut banks = HashMap::new();
         tags
             .into_iter()
-            .for_each(|(tag, phase)| {
+            .for_each(|(tag, table_tag, phase)| {
                 banks.insert(
                     tag, 
-                    MB::new(meta, cb, tag, phase, offset)
+                    MB::new(meta, cm, tag, table_tag, phase, offset)
                 );
             });
         Self { 
@@ -112,7 +112,7 @@ impl<F: Field, C: CellType, MB: MemoryBank<F, C>> Memory<F, C, MB> {
 
 
 pub(crate) trait MemoryBank<F: Field, C: CellType>: Clone {
-    fn new(meta: &mut ConstraintSystem<F>, cb: &mut ConstraintBuilder<F, C>, tag: C, phase: u8, offset: usize) -> Self;
+    fn new(meta: &mut ConstraintSystem<F>, cm: &mut CellManager<F, C>, tag: C, table_tag: C,  phase: u8, offset: usize) -> Self;
     fn store(&mut self, cb: &mut ConstraintBuilder<F, C>, values: &[Expression<F>]) -> Expression<F>;
     fn load(&mut self, cb: &mut ConstraintBuilder<F, C>, load_offset: Expression<F>, values: &[Expression<F>]);
     fn columns(&self) -> Vec<Column<Advice>>;
@@ -126,6 +126,7 @@ pub(crate) trait MemoryBank<F: Field, C: CellType>: Clone {
 #[derive(Clone, Debug)]
 pub(crate) struct RwBank<F, C> {
     tag: C,
+    table_tag: C,
     key: Column<Advice>,
     reads: Column<Advice>,
     writes: Column<Advice>,
@@ -150,15 +151,16 @@ impl<F: Field, C: CellType> RwBank<F, C> {
 impl<F: Field, C: CellType> MemoryBank<F, C> for RwBank<F, C> {
     fn new(
         meta: &mut ConstraintSystem<F>,
-        cb: &mut ConstraintBuilder<F, C>, 
+        cm: &mut CellManager<F, C>, 
         tag: C,
+        table_tag: C,
         phase: u8,
         offset: usize,
     ) -> Self {
-        let cm = cb.cell_manager.as_mut().unwrap();
-        let config = (tag, 2, phase, false);
+        let config = (tag, 1, phase, false);
         cm.add_celltype(meta, config, offset);
-        let rw_cols = cm.get_typed_columns(tag);
+        let table_config = (table_tag, 1, phase, false);
+        cm.add_celltype(meta, table_config, offset);
         let key = meta.advice_column();
         let (cur, next) = query_expression(meta, |meta| {
             (
@@ -168,9 +170,10 @@ impl<F: Field, C: CellType> MemoryBank<F, C> for RwBank<F, C> {
         });
         Self { 
             tag, 
+            table_tag, 
             key, 
-            reads: rw_cols[0].column, 
-            writes: rw_cols[1].column, 
+            reads: cm.get_typed_columns(tag)[0].column, 
+            writes: cm.get_typed_columns(table_tag)[0].column, 
             store_offsets: Vec::new(), 
             stored_values: Vec::new(), 
             cur,
@@ -186,13 +189,14 @@ impl<F: Field, C: CellType> MemoryBank<F, C> for RwBank<F, C> {
     ) -> Expression<F> {
         let values = self.prepend_key(values);
         cb.store_table(
-            Box::leak(format!("{:?} store", self.tag).into_boxed_str()),
-            self.tag, 
+            Box::leak(format!("{:?} store", self.table_tag).into_boxed_str()),
+            self.table_tag, 
             values.clone(), 
             true, 
             true, 
             false
         );
+        self.local_conditions.push((cb.region_id, cb.get_condition_expr()));
         values[0].expr()
     }
 

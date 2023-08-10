@@ -398,14 +398,17 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         &mut self,
         meta: &mut ConstraintSystem<F>,
         cell_managers: &[CellManager<F, C>],
-        tag: &C
+        tag: (&C, &C)
     ){
+        let (data_tag, table_tag) = tag;
         let challenge = self.lookup_challenge.clone().unwrap();
-        if let Some(table) = self.fixed_tables.get(tag) {
+        if let Some(table) = self.fixed_tables.get(table_tag) {
+            let table_expr = rlc::expr(&table, challenge.expr());
             for cm in cell_managers {
-                for col in cm.get_typed_columns(*tag) {
-                    meta.lookup_any(format!("{:?}", tag), |meta| {
-                        vec![(col.expr, rlc::expr(&table, challenge.expr()))]
+                for col in cm.get_typed_columns(*data_tag) {
+                    println!("fixed to fixed {:?} on col {:?}", tag, col.column.index());
+                    meta.lookup_any(format!("{:?}", data_tag), |meta| {
+                        vec![(col.expr(), table_expr.clone())]
                     });
                 }
             }
@@ -428,6 +431,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
                     ..
                 } = data.clone();
                 let mut table = if to_fixed {
+                    println!("dyn to fixed: {:?}", data.description);
                     // (v1, v2, v3) => (t1, t2, t3)
                     // Direct lookup into the pre-difined fixed tables, vanilla lookup of
                     // Halo2.
@@ -439,6 +443,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
                         ))
                         .clone()
                 } else {
+                    println!("dyn to dyn: {:?}", data.description);
                     // (v1, v2, v3) => cond * (t1, t2, t3)
                     // Applies condition to the advice values stored at configuration time
                     self.dynamic_table_merged(*tag)
@@ -473,16 +478,17 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         &mut self,
         meta: &mut ConstraintSystem<F>,
         cell_managers: &[CellManager<F, C>],
-        tags: &[(C, BuildOption)],
+        tags: &[(C, C, BuildOption)],
     ) {
         let challenge = self.lookup_challenge.clone().unwrap();
-        for (tag, option) in tags {
+        for (data_tag, table_tag, option) in tags {
+            println!("------- {:?} -------", data_tag);
             match option {
-                BuildOption::Fixed => self.build_fixed_path(meta, cell_managers, tag),
-                BuildOption::Dynamic => self.build_dynamic_path(meta, tag),
+                BuildOption::Fixed => self.build_fixed_path(meta, cell_managers, (data_tag, table_tag)),
+                BuildOption::Dynamic => self.build_dynamic_path(meta, data_tag),
                 BuildOption::Default => {
-                    self.build_fixed_path(meta, cell_managers, tag);
-                    self.build_dynamic_path(meta, tag);
+                    self.build_fixed_path(meta, cell_managers,(data_tag, table_tag));
+                    self.build_dynamic_path(meta, data_tag);
                 },
             };
         }
@@ -511,6 +517,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
                 self.dynamic_tables.insert(tag, vec![data]);
             }
         } else {
+            println!("self.fixed_tables.insert({:?});", tag);
             self.fixed_tables.insert(tag, values);
         }
     }

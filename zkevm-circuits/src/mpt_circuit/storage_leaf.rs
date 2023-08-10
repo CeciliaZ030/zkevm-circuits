@@ -179,7 +179,7 @@ impl<F: Field> StorageLeafConfig<F> {
                     config.is_not_hashed[is_s.idx()] = LtGadget::construct(&mut cb.base, rlp_key.rlp_list.num_bytes(), 32.expr());
                     ifx!{or::expr(&[parent_data.is_root.expr(), not!(config.is_not_hashed[is_s.idx()])]) => {
                         // Hashed branch hash in parent branch
-                        require!((1, leaf_rlc, rlp_key.rlp_list.num_bytes(), parent_data.rlc) =>> @KECCAK,  (COMPRESS, REDUCE, TO_FIX));
+                        require!((1, leaf_rlc, rlp_key.rlp_list.num_bytes(), parent_data.rlc) =>> @KECCAK, (COMPRESS, REDUCE, TO_FIX));
                     } elsex {
                         // Non-hashed branch hash in parent branch   
                         // TODO(Brecht): restore

@@ -201,11 +201,11 @@ impl CellType for DefaultCellType {
 #[derive(Clone, Debug)]
 pub(crate) struct CellColumn<F, C: CellType> {
     pub(crate) column: Column<Advice>,
-    index: usize,
     pub(crate) cell_type: C,
-    height: usize,
     pub(crate) cells: Vec<Cell<F>>,
     pub(crate) expr: Expression<F>,
+    height: usize,
+    index: usize,
 }
 
 impl<F: Field, C: CellType> PartialEq for CellColumn<F, C> {
@@ -253,11 +253,11 @@ impl<F: Field, C: CellType> CellManager<F, C> {
         max_height: usize,
     ) -> Self {
         let mut cm = CellManager::default();
+        cm.height_limit = max_height;
         configs
             .into_iter()
             .for_each(|c| cm.add_celltype(meta, c, offset));
         cm.height = max_height;
-        cm.height_limit = max_height;
         cm
     }
 
@@ -268,7 +268,7 @@ impl<F: Field, C: CellType> CellManager<F, C> {
         offset: usize,
     ) {
         if self.get_typed_columns(config.0).len() != 0 {
-            panic!("CellManager: cell type already exists");
+            panic!("CellManager: cell type {:?} already exists", config.0);
         }
         let config = CellConfig::from(config);
         for col in config.init_columns(meta).iter() {
@@ -295,14 +295,6 @@ impl<F: Field, C: CellType> CellManager<F, C> {
         for col in self.columns.iter_mut() {
             col.height = 0;
         }
-    }
-
-    pub(crate) fn add_columns(
-        &mut self,
-        meta: &mut ConstraintSystem<F>,
-        configs: Vec<(C, usize, u8, bool)>
-    ) {
-
     }
 
     pub(crate) fn query_cells(&mut self, cell_type: C, count: usize) -> Vec<Cell<F>> {
@@ -380,6 +372,15 @@ impl<F: Field, C: CellType> CellManager<F, C> {
             }
         }
         columns
+    }
+
+    pub(crate) fn get_config(&self, cell_type: C) -> Option<CellConfig<C>> {
+        for config in self.configs.iter() {
+            if config.cell_type == cell_type {
+                return Some(config.clone());
+            }
+        }
+        None
     }
 
     pub(crate) fn build_lookups_from_table(
