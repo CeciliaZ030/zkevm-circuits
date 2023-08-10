@@ -117,12 +117,6 @@ impl<F: Field, C: CellType> TableMerger<F, C> {
     }
 }
 
-pub enum BuildOption {
-    Fixed,
-    Dynamic,
-    Default,
-}
-
 /// Constraint builder
 #[derive(Clone)]
 pub struct ConstraintBuilder<F, C: CellType> {
@@ -478,19 +472,13 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         &mut self,
         meta: &mut ConstraintSystem<F>,
         cell_managers: &[CellManager<F, C>],
-        tags: &[(C, C, BuildOption)],
+        tags: &[(C, C)],
     ) {
         let challenge = self.lookup_challenge.clone().unwrap();
-        for (data_tag, table_tag, option) in tags {
+        for (data_tag, table_tag) in tags {
             println!("------- {:?} -------", data_tag);
-            match option {
-                BuildOption::Fixed => self.build_fixed_path(meta, cell_managers, (data_tag, table_tag)),
-                BuildOption::Dynamic => self.build_dynamic_path(meta, data_tag),
-                BuildOption::Default => {
-                    self.build_fixed_path(meta, cell_managers,(data_tag, table_tag));
-                    self.build_dynamic_path(meta, data_tag);
-                },
-            };
+            self.build_fixed_path(meta, cell_managers,(data_tag, table_tag));
+            self.build_dynamic_path(meta, data_tag);
         }
     }
 

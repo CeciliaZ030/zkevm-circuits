@@ -40,7 +40,7 @@ use self::{
 };
 use crate::{
     assign, assignf, circuit,
-    circuit_tools::{cached_region::CachedRegion, cell_manager::CellManager, memory::{Memory, RwBank}, constraint_builder::BuildOption},
+    circuit_tools::{cached_region::CachedRegion, cell_manager::CellManager, memory::{Memory, RwBank}},
     evm_circuit::table::Table,
     mpt_circuit::{
         helpers::{MPTConstraintBuilder, MainRLPGadget, MptCellType},
@@ -368,14 +368,14 @@ impl<F: Field> MPTConfig<F> {
                 meta,
                 &[rlp_cm, state_cm],
                 &[
-                    (MptCellType::Lookup(Table::Keccak), MptCellType::Lookup(Table::Keccak), BuildOption::Default),
-                    (MptCellType::Lookup(Table::Fixed), MptCellType::Lookup(Table::Fixed),  BuildOption::Default),
-                    (MptCellType::Lookup(Table::Exp), MptCellType::Lookup(Table::Exp), BuildOption::Default),
-                    (MptCellType::MemKeyC, MptCellType::MemKeyC_, BuildOption::Fixed),
-                    (MptCellType::MemKeyS, MptCellType::MemKeyS_,  BuildOption::Fixed),
-                    (MptCellType::MemParentC, MptCellType::MemParentC_,  BuildOption::Fixed),
-                    (MptCellType::MemParentS, MptCellType::MemParentS_,  BuildOption::Fixed),
-                    (MptCellType::MemMain, MptCellType::MemMain_,  BuildOption::Fixed),
+                    (MptCellType::Lookup(Table::Keccak), MptCellType::Lookup(Table::Keccak)),
+                    (MptCellType::Lookup(Table::Fixed), MptCellType::Lookup(Table::Fixed),),
+                    (MptCellType::Lookup(Table::Exp), MptCellType::Lookup(Table::Exp)),
+                    (MptCellType::MemKeyC, MptCellType::MemKeyC_),
+                    (MptCellType::MemKeyS, MptCellType::MemKeyS_),
+                    (MptCellType::MemParentC, MptCellType::MemParentC_),
+                    (MptCellType::MemParentS, MptCellType::MemParentS_),
+                    (MptCellType::MemMain, MptCellType::MemMain_),
                 ],
             );
         } 
