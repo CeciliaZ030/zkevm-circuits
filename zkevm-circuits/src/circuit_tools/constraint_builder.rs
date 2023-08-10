@@ -400,7 +400,6 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
             let table_expr = rlc::expr(&table, challenge.expr());
             for cm in cell_managers {
                 for col in cm.get_typed_columns(*data_tag) {
-                    println!("fixed to fixed {:?} on col {:?}", tag, col.column.index());
                     meta.lookup_any(format!("{:?}", data_tag), |meta| {
                         vec![(col.expr(), table_expr.clone())]
                     });
@@ -426,19 +425,17 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
                     ..
                 } = data.clone();
                 let mut table = if to_fixed {
-                    println!("dyn to fixed: {:?}", data.description);
                     // (v1, v2, v3) => (t1, t2, t3)
                     // Direct lookup into the pre-difined fixed tables, vanilla lookup of
                     // Halo2.
                     self.fixed_tables
                         .get(table_tag)
                         .expect(&format!(
-                            "Fixed table tag {:?} not provided for lookup data",
+                            "Fixed table {:?} not found for dynamic lookup",
                             table_tag
                         ))
                         .clone()
                 } else {
-                    println!("dyn to dyn: {:?}", data.description);
                     // (v1, v2, v3) => cond * (t1, t2, t3)
                     // Applies condition to the advice values stored at configuration time
                     self.dynamic_table_merged(*table_tag)
@@ -477,7 +474,6 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
     ) {
         let challenge = self.lookup_challenge.clone().unwrap();
         for tag in tags {
-            println!("------- {:?} -------", tag.0);
             self.build_fixed_path(meta, cell_managers, tag);
             self.build_dynamic_path(meta, tag);
         }
@@ -506,7 +502,6 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
                 self.dynamic_tables.insert(tag, vec![data]);
             }
         } else {
-            println!("self.fixed_tables.insert({:?});", tag);
             self.fixed_tables.insert(tag, values);
         }
     }
