@@ -188,7 +188,6 @@ impl CellType for DefaultCellType {
     }
 
     fn storage_for_phase(phase: u8) -> Self {
-        // println!("phase: {}", phase);
         match phase {
             1 => DefaultCellType::StoragePhase1,
             2 => DefaultCellType::StoragePhase2,
@@ -381,25 +380,6 @@ impl<F: Field, C: CellType> CellManager<F, C> {
             }
         }
         None
-    }
-
-    pub(crate) fn build_lookups_from_table(
-        &self,
-        meta: &mut ConstraintSystem<F>,
-        tables: &[(C, &dyn LookupTable<F>)],
-        challenge: Expression<F>,
-    ) {
-        for (cell_type, table) in tables {
-            for col in self.get_typed_columns(*cell_type) {
-                let name = format!("{:?}", cell_type);
-                meta.lookup_any(Box::leak(name.into_boxed_str()), |meta| {
-                    vec![(
-                        col.expr,
-                        rlc::expr(&table.table_exprs(meta), challenge.expr()),
-                    )]
-                });
-            }
-        }
     }
 }
 

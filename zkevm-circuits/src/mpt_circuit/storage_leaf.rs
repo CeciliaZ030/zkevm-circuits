@@ -89,7 +89,7 @@ impl<F: Field> StorageLeafConfig<F> {
                 ctx.rlp_item(meta, cb, StorageRowType::Wrong as usize, RlpItemType::Key);
 
             config.main_data =
-                MainData::load("main storage", cb, &mut ctx.memory[main_memory()], 0.expr());
+                MainData::load(cb, &mut ctx.memory[main_memory()], 0.expr());
 
             // Storage leaves always need to be below accounts
             require!(config.main_data.is_below_account => true);

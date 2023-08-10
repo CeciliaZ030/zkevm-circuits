@@ -91,12 +91,12 @@ impl<F: Field> ExtensionGadget<F> {
 
             config.rlp_key = ListKeyGadget::construct(cb, &key_items[0]);
             config.is_key_part_odd = cb.query_cell();
-            let _first_byte = matchx! {(
+            let first_byte = matchx! {(
                 key_items[true.idx()].is_short() => key_items[true.idx()].bytes[0].expr(),
                 key_items[true.idx()].is_long() => key_items[true.idx()].bytes[1].expr(),
                 key_items[true.idx()].is_very_long() => key_items[true.idx()].bytes[2].expr(),
             )};
-            // require!((FixedTableTag::ExtOddKey.expr(), first_byte, config.is_key_part_odd.expr()) => @FIXED,);
+            require!((FixedTableTag::ExtOddKey.expr(), first_byte, config.is_key_part_odd.expr()) => @FIXED, (COMPRESS, REDUCE, TO_FIX));
 
             let mut branch_rlp_rlc = vec![0.expr(); 2];
             for is_s in [true, false] {
