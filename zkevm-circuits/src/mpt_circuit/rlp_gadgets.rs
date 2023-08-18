@@ -3,7 +3,7 @@ use crate::{
     circuit_tools::{
         cached_region::CachedRegion,
         cell_manager::Cell,
-        constraint_builder::{ConstraintBuilder, RLCable, RLCableValue, COMPRESS, REDUCE, TO_FIX},
+        constraint_builder::{ConstraintBuilder, RLCable, RLCableValue},
     },
     matchw,
     mpt_circuit::{
@@ -91,7 +91,7 @@ impl<F: Field> RLPListGadget<F> {
                     is_short.expr(),
                     is_long.expr(),
                     is_very_long.expr()
-                ) =>> @FIXED,  (COMPRESS, REDUCE, TO_FIX)
+                ) =>> @FIXED
             );
 
             RLPListGadget {
@@ -353,7 +353,7 @@ impl<F: Field> RLPValueGadget<F> {
                     is_short.expr(),
                     is_long.expr(),
                     is_very_long.expr()
-                ) =>> @FIXED, (COMPRESS, REDUCE, TO_FIX)
+                ) =>> @FIXED
             );
 
             RLPValueGadget {

@@ -5,7 +5,7 @@ use crate::{
         cell_manager::{Cell, CellManager, CellType},
         constraint_builder::{
             ConstraintBuilder, RLCChainable, RLCChainable2, RLCChainableValue, RLCable,
-            RLCableValue, COMPRESS, REDUCE, TO_FIX
+            RLCableValue
         },
         gadgets::{IsEqualGadget, IsZeroGadget, LtGadget},
         memory::{MemoryBank},
@@ -904,14 +904,6 @@ impl<F: Field> MPTConstraintBuilder<F> {
         }
     }
 
-    pub(crate) fn preload_tables(
-        &mut self, 
-        meta: &mut ConstraintSystem<F>,
-        tables: &[(MptCellType, &dyn LookupTable<F>)]
-    ) {
-        self.base.preload_tables(meta, tables);
-    }
-
     pub(crate) fn push_condition(&mut self, condition: Expression<F>) {
         self.base.push_condition(condition)
     }
@@ -978,16 +970,12 @@ impl<F: Field> MPTConstraintBuilder<F> {
 
     pub(crate) fn add_lookup(
         &mut self,
-        description: &'static str,
-        tag: MptCellType,
+        description: String,
         values: Vec<Expression<F>>,
-        to_fixed: bool,
-        compress: bool,
-        reduce: bool,
-        fixed_path: bool,
+        table: Vec<Expression<F>>,
     ) {
         self.base
-            .add_lookup(description, tag, values, to_fixed, compress, reduce, fixed_path)
+            .add_lookup(description, values, table);
     }
 
     pub(crate) fn store_table(
@@ -995,12 +983,25 @@ impl<F: Field> MPTConstraintBuilder<F> {
         description: &'static str,
         tag: MptCellType,
         values: Vec<Expression<F>>,
-        compress: bool,
-        is_split: bool,
-        dyn_path: bool,
     ) {
         self.base
-            .store_table(description, tag, values, compress, is_split, dyn_path)
+            .store_table(description, tag, values)
+    }
+
+    pub(crate) fn store_tuple(
+        &mut self,
+        description: &'static str,
+        cell_type: MptCellType,
+        values: Vec<Expression<F>>,
+    ) -> Expression<F> {
+        self.base.store_tuple(description, cell_type, values)
+    }
+
+    pub(crate) fn get_table(
+        &self,
+        cell_type: MptCellType,
+    ) -> Vec<Expression<F>> {
+        self.base.get_table(cell_type)
     }
 }
 
@@ -1117,7 +1118,7 @@ impl<F: Field> DriftedGadget<F> {
                         //let leaf_rlc = (config.drifted_rlp_key.rlc(be_r), mult.expr()).rlc_chain(leaf_no_key_rlc[is_s.idx()].expr());
                         let leaf_rlc = config.drifted_rlp_key.rlc2(&cb.keccak_r).rlc_chain2((leaf_no_key_rlc[is_s.idx()].expr(), leaf_no_key_rlc_mult[is_s.idx()].expr()));
                         // The drifted leaf needs to be stored in the branch at `drifted_index`.
-                        require!((1, leaf_rlc, config.drifted_rlp_key.rlp_list.num_bytes(), parent_data[is_s.idx()].drifted_parent_rlc.expr()) =>> @KECCAK, (COMPRESS, REDUCE, TO_FIX));
+                        require!((1, leaf_rlc, config.drifted_rlp_key.rlp_list.num_bytes(), parent_data[is_s.idx()].drifted_parent_rlc.expr()) =>> @KECCAK);
                     }
                 }}
             }}
@@ -1299,8 +1300,8 @@ impl<F: Field> MainRLPGadget<F> {
 
             // TODO(Brecht): cleanup inv challenge
             require!(config.mult_inv.expr() * pow::expr(cb.keccak_r.expr(), RLP_UNIT_NUM_BYTES) => config.mult_diff_keccak.expr());
-            require!((FixedTableTag::RMult, config.rlp.num_bytes(), config.mult_diff.expr()) =>> @FIXED, (COMPRESS, REDUCE));
-            require!((config.rlp.num_bytes(), config.mult_diff_keccak.expr()) =>> @MULT, (COMPRESS, REDUCE, TO_FIX));
+            require!((FixedTableTag::RMult, config.rlp.num_bytes(), config.mult_diff.expr()) =>> @FIXED);
+            require!((config.rlp.num_bytes(), config.mult_diff_keccak.expr()) =>> @MULT);
             // `tag` and `max_len` are "free" input that needs to be constrained externally!
 
             // Range/zero checks
@@ -1309,6 +1310,7 @@ impl<F: Field> MainRLPGadget<F> {
             // the byte index >= num_bytes.
             // We enable dynamic lookups because otherwise these lookup would require a lot of extra
             // cells.
+            let table = cb.get_table(FIXED);
             if params.is_two_byte_lookup_enabled() {
                 assert!(config.bytes.len() % 2 == 0);
                 for idx in (0..config.bytes.len()).step_by(2) {
@@ -1317,15 +1319,15 @@ impl<F: Field> MainRLPGadget<F> {
                         config.num_bytes.expr() - idx.expr(),
                         config.bytes[idx],
                         config.bytes[idx + 1]
-                    ) => @FIXED,  (COMPRESS, TO_FIX));
+                    ) => @table.clone());
                 }
             } else {
                 for (idx, byte) in config.bytes.iter().enumerate() {
                     require!((
-                        config.tag.expr(), 
-                        config.num_bytes.expr() - idx.expr(), 
+                        config.tag.expr(),
+                        config.num_bytes.expr() - idx.expr(),
                         byte.expr()
-                    ) => @FIXED, (COMPRESS, TO_FIX));
+                    ) => @table.clone());
                 }
             }
 

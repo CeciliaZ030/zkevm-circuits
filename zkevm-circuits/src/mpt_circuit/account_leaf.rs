@@ -16,7 +16,7 @@ use crate::{
     circuit_tools::{
         cached_region::CachedRegion,
         cell_manager::Cell,
-        constraint_builder::{RLCChainable2, RLCable, RLCableValue, COMPRESS, REDUCE, TO_FIX},
+        constraint_builder::{RLCChainable2, RLCable, RLCableValue},
         gadgets::IsEqualGadget,
     },
     mpt_circuit::{
@@ -216,7 +216,7 @@ impl<F: Field> AccountLeafConfig<F> {
                 // Check if the account is in its parent.
                 // Check is skipped for placeholder leaves which are dummy leaves
                 ifx! {not!(and::expr(&[not!(config.parent_data[is_s.idx()].is_placeholder), config.is_placeholder_leaf[is_s.idx()].expr()])) => {
-                    require!((1, leaf_rlc, rlp_key.rlp_list.num_bytes(), config.parent_data[is_s.idx()].rlc) =>> @KECCAK, (COMPRESS, REDUCE, TO_FIX));
+                    require!((1, leaf_rlc, rlp_key.rlp_list.num_bytes(), config.parent_data[is_s.idx()].rlc) =>> @KECCAK);
                 }}
 
                 // Check the RLP encoding consistency.

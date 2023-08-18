@@ -1,8 +1,6 @@
 //! Memory
-use crate::{
-    util::{query_expression, Expr},
-};
-use eth_types::{Field};
+use crate::util::{query_expression, Expr};
+use eth_types::Field;
 use halo2_proofs::{
     circuit::Value,
     plonk::{
@@ -10,7 +8,6 @@ use halo2_proofs::{
     },
     poly::Rotation,
 };
-use itertools::Itertools;
 use std::{
     collections::HashMap,
     ops::{Index, IndexMut}, marker::PhantomData,
@@ -54,8 +51,9 @@ impl<F: Field, C: CellType, MB: MemoryBank<F, C>> IndexMut<C> for Memory<F, C, M
 
 impl<F: Field, C: CellType, MB: MemoryBank<F, C>> Memory<F, C, MB> {
     pub(crate) fn new(
-        cm: &mut CellManager<F, C>, 
+        cm: &mut CellManager<F, C>,
         meta: &mut ConstraintSystem<F>,
+        cb: &mut ConstraintBuilder<F, C>,
         tags: Vec<(C, C, u8)>,
         offset: usize,
     ) -> Self {
@@ -64,11 +62,11 @@ impl<F: Field, C: CellType, MB: MemoryBank<F, C>> Memory<F, C, MB> {
             .into_iter()
             .for_each(|(data_tag, table_tag, phase)| {
                 banks.insert(
-                    data_tag, 
-                    MB::new(meta, cm, (data_tag, table_tag), phase, offset)
+                    data_tag,
+                    MB::new(meta, cb, cm, (data_tag, table_tag), phase, offset)
                 );
             });
-        Self { 
+        Self {
             banks,
             _phantom: PhantomData
         }
@@ -111,7 +109,7 @@ impl<F: Field, C: CellType, MB: MemoryBank<F, C>> Memory<F, C, MB> {
 
 
 pub(crate) trait MemoryBank<F: Field, C: CellType>: Clone {
-    fn new(meta: &mut ConstraintSystem<F>, cm: &mut CellManager<F, C>, tag: (C, C), phase: u8, offset: usize) -> Self;
+    fn new(meta: &mut ConstraintSystem<F>, cb: &mut ConstraintBuilder<F, C>, cm: &mut CellManager<F, C>, tag: (C, C), phase: u8, offset: usize) -> Self;
     fn store(&mut self, cb: &mut ConstraintBuilder<F, C>, values: &[Expression<F>]) -> Expression<F>;
     fn load(&mut self, cb: &mut ConstraintBuilder<F, C>, load_offset: Expression<F>, values: &[Expression<F>]);
     fn columns(&self) -> Vec<Column<Advice>>;
@@ -120,6 +118,10 @@ pub(crate) trait MemoryBank<F: Field, C: CellType>: Clone {
     fn witness_load(&self, offset: usize) -> Vec<F>;
     fn build_constraints(&self, cb: &mut ConstraintBuilder<F, C>, q_start: Expression<F>);
     fn assign(&self, region: &mut CachedRegion<'_, '_, F>, height: usize) -> Result<(), Error>;
+}
+
+pub(crate) fn insert_key<V: Clone>(key: V, values: &[V]) -> Vec<V> {
+    [vec![key], values.to_owned()].concat().to_vec()
 }
 
 #[derive(Clone, Debug)]
@@ -137,6 +139,9 @@ pub(crate) struct RwBank<F, C> {
 }
 
 impl<F: Field, C: CellType> RwBank<F, C> {
+    pub(crate) fn key(&self) -> Expression<F> {
+        self.cur.expr()
+    }
     pub(crate) fn prepend_key(&self, values: &[Expression<F>]) -> Vec<Expression<F>> {
         [&[self.cur.expr() + 1.expr()], values].concat().to_vec()
     }
@@ -149,7 +154,8 @@ impl<F: Field, C: CellType> RwBank<F, C> {
 impl<F: Field, C: CellType> MemoryBank<F, C> for RwBank<F, C> {
     fn new(
         meta: &mut ConstraintSystem<F>,
-        cm: &mut CellManager<F, C>, 
+        cb: &mut ConstraintBuilder<F, C>,
+        cm: &mut CellManager<F, C>,
         tag: (C, C),
         phase: u8,
         offset: usize,
@@ -161,19 +167,27 @@ impl<F: Field, C: CellType> MemoryBank<F, C> for RwBank<F, C> {
                 cm.get_typed_columns(t.clone())[0].column
             }).collect();
         let key = meta.advice_column();
-        let (cur, next) = query_expression(meta, |meta| {
+        let (cur, next, input, table) = query_expression(meta, |meta| {
             (
-                meta.query_advice(key, Rotation(0)),
-                meta.query_advice(key, Rotation(1))
-            )   
+                meta.query_advice(key, Rotation::cur()),
+                meta.query_advice(key, Rotation::next()),
+                meta.query_advice(rw[0], Rotation::cur()),
+                meta.query_advice(rw[1], Rotation::cur()),
+            )
         });
-        Self { 
-            tag, 
-            key, 
-            reads: rw[0], 
-            writes: rw[1], 
-            store_offsets: Vec::new(), 
-            stored_values: Vec::new(), 
+
+        // Generate the memory lookup
+        crate::circuit!([meta, cb], {
+            require!((input) => @vec![table]);
+        });
+
+        Self {
+            tag,
+            key,
+            reads: rw[0],
+            writes: rw[1],
+            store_offsets: Vec::new(),
+            stored_values: Vec::new(),
             cur,
             next,
             local_conditions: Vec::new(),
@@ -181,38 +195,30 @@ impl<F: Field, C: CellType> MemoryBank<F, C> for RwBank<F, C> {
     }
 
     fn store(
-        &mut self, 
-        cb: &mut ConstraintBuilder<F, C>, 
+        &mut self,
+        cb: &mut ConstraintBuilder<F, C>,
         values: &[Expression<F>]
     ) -> Expression<F> {
-        let values = self.prepend_key(values);
-        cb.store_table(
+        let key = self.key() + 1.expr();
+        cb.store_tuple(
             Box::leak(format!("{:?} store", self.tag.1).into_boxed_str()),
-            self.tag.1, 
-            values.clone(), 
-            true, 
-            true, 
-            false
+            self.tag.1,
+            insert_key(key.expr(), &values),
         );
         self.local_conditions.push((cb.region_id, cb.get_condition_expr()));
-        values[0].expr()
+        key
     }
 
     fn load(
-        &mut self, 
-        cb: &mut ConstraintBuilder<F, C>, 
-        load_offset: Expression<F>, 
+        &mut self,
+        cb: &mut ConstraintBuilder<F, C>,
+        load_offset: Expression<F>,
         values: &[Expression<F>]
     ) {
-        let values = self.prepend_offset(values, load_offset);
-        cb.add_lookup(
-            Box::leak(format!("{:?} load", self.tag.0).into_boxed_str()), 
-            self.tag.0, 
-            values, 
-            false, 
-            true, 
-            true, 
-            false
+        cb.store_tuple(
+            Box::leak(format!("{:?} load", self.tag.0).into_boxed_str()),
+            self.tag.0,
+            insert_key(self.key() - load_offset.expr(), &values),
         );
     }
 
@@ -225,8 +231,8 @@ impl<F: Field, C: CellType> MemoryBank<F, C> for RwBank<F, C> {
     }
 
     fn build_constraints(
-        &self, 
-        cb: &mut ConstraintBuilder<F, C>, 
+        &self,
+        cb: &mut ConstraintBuilder<F, C>,
         q_start: Expression<F>
     ) {
         let condition = self
@@ -241,7 +247,7 @@ impl<F: Field, C: CellType> MemoryBank<F, C> for RwBank<F, C> {
             let description = format!("Dynamic lookup table {:?}", self.tag());
             require!(condition => bool);
             require!(description, self.next => self.cur.expr() + condition.expr());
-        });    
+        });
     }
 
     fn witness_store(&mut self, offset: usize, values: &[F]) {

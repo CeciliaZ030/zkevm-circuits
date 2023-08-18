@@ -41,13 +41,13 @@ use self::{
 use crate::{
     assign, assignf, circuit,
     circuit_tools::{cached_region::CachedRegion, cell_manager::CellManager, memory::{Memory, RwBank}},
-    evm_circuit::table::Table,
+    evm_circuit::{table::Table, util::rlc},
     mpt_circuit::{
-        helpers::{MPTConstraintBuilder, MainRLPGadget, MptCellType},
+        helpers::{MPTConstraintBuilder, MainRLPGadget, MptCellType, MULT, KECCAK, FIXED},
         start::StartConfig,
         storage_leaf::StorageLeafConfig,
     },
-    table::{KeccakTable, MPTProofType, MptTable},
+    table::{KeccakTable, MPTProofType, MptTable, LookupTable},
     util::Challenges,
 };
 use extension_branch::ExtensionBranchConfig;
@@ -263,26 +263,16 @@ impl<F: Field> MPTConfig<F> {
         );
         let r = 123456.expr();
         let mut cb = MPTConstraintBuilder::new(
-            5, 
-            Some(challenges.clone()), 
-            None, 
+            5,
+            Some(challenges.clone()),
+            None,
             r.expr()
         );
-        // Note(Cecilia): can also do this to achieve the equivalant effect:
-        //      require!(@KECCAK => (a, b, c))
-        // To directly rlc table into a colum, do this:
-        //  require!(@KECCAK, (COMPRESS, REDUCE) =>> (a, b, c))
-        cb.preload_tables(
-            meta, 
-            &[
-                (MptCellType::Lookup(Table::Keccak), &keccak_table),
-                (MptCellType::Lookup(Table::Fixed), &fixed_table),
-                (MptCellType::Lookup(Table::Exp), &mult_table)
-            ],
-        );
+
         let memory = Memory::new(
             &mut state_cm,
             meta,
+            &mut cb.base,
             vec![
                 (MptCellType::MemKeyC, MptCellType::MemKeyC_,  3),
                 (MptCellType::MemKeyS, MptCellType::MemKeyS_, 3),
@@ -299,6 +289,11 @@ impl<F: Field> MPTConfig<F> {
         };
         meta.create_gate("MPT", |meta| {
             circuit!([meta, cb], {
+                // Populate lookup tables
+                cb.store_table("keccak", KECCAK, keccak_table.table_exprs(meta));
+                cb.store_table("fixed", FIXED, fixed_table.table_exprs(meta));
+                cb.store_table("mult", MULT, mult_table.table_exprs(meta));
+
                 ifx!{f!(q_enable) => {
                     // Mult table
                     ifx! {f!(q_first) => {
@@ -360,6 +355,29 @@ impl<F: Field> MPTConfig<F> {
                 }}
             });
 
+            // Set up stored lookups
+            for cell_manager in [&rlp_cm, &state_cm] {
+                for column in cell_manager.columns().iter() {
+                    if let MptCellType::Lookup(table) = column.cell_type {
+                        let table_expressions = match table {
+                            Table::Fixed => fixed_table.table_exprs(meta),
+                            Table::Keccak => keccak_table.table_exprs(meta),
+                            Table::Exp => mult_table.table_exprs(meta),
+                            _ => unreachable!(),
+                        };
+                        let name = format!("{:?}", table);
+                        cb.add_lookup(name, vec![column.expr()], vec![rlc::expr(
+                            &table_expressions,
+                            cb.base.lookup_challenge.clone().unwrap(),
+                        )]);
+                    }
+                    if let MptCellType::LookupByte = column.cell_type {
+                        let byte_table_expression = fixed_table.table_exprs(meta)[2].clone();
+                        cb.add_lookup("Byte lookup".to_string(), vec![column.expr()], vec![byte_table_expression]);
+                    }
+                }
+            }
+
             cb.base.build_constraints()
         });
 
@@ -368,69 +386,8 @@ impl<F: Field> MPTConfig<F> {
             .parse()
             .expect("Cannot parse DISABLE_LOOKUPS env var as usize");
         if disable_lookups == 0 {
-            cb.base.build_lookups(
-                meta,
-                &[rlp_cm, state_cm],
-                &[
-                    // dyn data =>> fixed table
-                    (MptCellType::Lookup(Table::Keccak), MptCellType::Lookup(Table::Keccak)),
-                    // dyn data =>> fixed table & dyn data => fixed table
-                    (MptCellType::Lookup(Table::Fixed), MptCellType::Lookup(Table::Fixed)),
-                    // dyn data =>> fixed table
-                    (MptCellType::Lookup(Table::Exp), MptCellType::Lookup(Table::Exp)),
-                    // dyn data =>> dyn table
-                    // dyn data rlc into col and dyn table rlc into col needs two tags to identify
-                    (MptCellType::MemKeyC, MptCellType::MemKeyC_),
-                    (MptCellType::MemKeyS, MptCellType::MemKeyS_),
-                    (MptCellType::MemParentC, MptCellType::MemParentC_),
-                    (MptCellType::MemParentS, MptCellType::MemParentS_),
-                    (MptCellType::MemMain, MptCellType::MemMain_),
-                ],
-            );
-        } 
-        
-        // else if disable_lookups == 1 {
-        //     cb.base.build_lookups(
-        //         meta,
-        //         &[rlp_cm, state_cm],
-        //         &[],
-        //         &[
-        //             (MptCellType::Lookup(Table::Keccak), Some(&keccak_table)),
-        //             (MptCellType::Lookup(Table::Fixed), Some(&fixed_table)),
-        //         ],
-        //     );
-        //     memory.build_lookups(meta);
-        // } else if disable_lookups == 2 {
-        //     cb.base.build_lookups(
-        //         meta,
-        //         &[rlp_cm, state_cm],
-        //         &[],
-        //         &[
-        //             (MptCellType::Lookup(Table::Fixed), Some(&fixed_table)),
-        //         ],
-        //     );
-        //     memory.build_lookups(meta);
-        // } else if disable_lookups == 3 {
-        //     cb.base.build_lookups(
-        //         meta,
-        //         &[rlp_cm, state_cm],
-        //         &[],
-        //         &[
-        //             (MptCellType::Lookup(Table::Keccak), Some(&keccak_table)),
-        //             (MptCellType::Lookup(Table::Fixed), Some(&fixed_table)),
-        //         ],
-        //     );
-        // } else if disable_lookups == 4 {
-        //     cb.base.build_lookups(
-        //         meta,
-        //         &[rlp_cm, state_cm],
-        //         &[],
-        //         &[
-        //             (MptCellType::Lookup(Table::Keccak), Some(&keccak_table)),
-        //             (MptCellType::Lookup(Table::Fixed), Some(&fixed_table)),
-        //         ],
-        //     );
-        // }
+            cb.base.build_lookups(meta);
+        }
 
         println!("max expression degree: {}", meta.degree());
         println!("num lookups: {}", meta.lookups().len());
@@ -471,7 +428,7 @@ impl<F: Field> MPTConfig<F> {
 
                 let mut memory = self.memory.clone();
 
-                let mut offset = 0; 
+                let mut offset = 0;
                 for node in nodes.iter() {
                     //println!("offset: {}", offset);
                     let mut cached_region = CachedRegion::new(
