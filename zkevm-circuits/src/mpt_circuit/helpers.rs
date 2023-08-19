@@ -27,7 +27,7 @@ use eth_types::{Field, Word as U256};
 use gadgets::util::{not, or, pow, Scalar};
 use halo2_proofs::{
     circuit::Value,
-    plonk::{Error, Expression, VirtualCells, ConstraintSystem},
+    plonk::{Error, Expression, VirtualCells},
 };
 use strum_macros::EnumIter;
 
@@ -1012,8 +1012,7 @@ impl<F: Field> MPTConstraintBuilder<F> {
         values: Vec<Expression<F>>,
         table: Vec<Expression<F>>,
     ) {
-        self.base
-            .add_lookup(description, values, table);
+        self.base.add_lookup(description, values, table);
     }
 
     pub(crate) fn store_table(
@@ -1022,8 +1021,7 @@ impl<F: Field> MPTConstraintBuilder<F> {
         tag: MptCellType,
         values: Vec<Expression<F>>,
     ) {
-        self.base
-            .store_table(description, tag, values)
+        self.base.store_table(description, tag, values)
     }
 
     pub(crate) fn store_tuple(
@@ -1035,10 +1033,7 @@ impl<F: Field> MPTConstraintBuilder<F> {
         self.base.store_tuple(description, cell_type, values)
     }
 
-    pub(crate) fn get_table(
-        &self,
-        cell_type: MptCellType,
-    ) -> Vec<Expression<F>> {
+    pub(crate) fn get_table(&self, cell_type: MptCellType) -> Vec<Expression<F>> {
         self.base.get_table(cell_type)
     }
 }

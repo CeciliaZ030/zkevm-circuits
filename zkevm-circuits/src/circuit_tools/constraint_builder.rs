@@ -1,8 +1,9 @@
 //! Circuit utilities
 use std::{
     collections::HashMap,
+    marker::PhantomData,
     ops::{Add, Mul},
-    vec, marker::PhantomData,
+    vec,
 };
 
 use crate::{
@@ -71,7 +72,7 @@ impl<F: Field> LookupData<F> {
     }
 }
 
-struct TableMerger<F, C>{
+struct TableMerger<F, C> {
     data: Vec<TableData<F>>,
     _phantom: PhantomData<C>,
 }
@@ -84,7 +85,7 @@ impl<F: Field, C: CellType> TableMerger<F, C> {
         });
     }
 
-    fn merge_unsafe(&self,) -> (Expression<F>, Vec<Expression<F>>) {
+    fn merge_unsafe(&self) -> (Expression<F>, Vec<Expression<F>>) {
         if self.data.is_empty() {
             return (0.expr(), Vec::new());
         }
@@ -93,16 +94,13 @@ impl<F: Field, C: CellType> TableMerger<F, C> {
         let max_length = self.data.iter().map(|t| t.values.len()).max().unwrap();
         let mut merged_values = vec![0.expr(); max_length];
         let default_value = 0.expr();
-        merged_values
-            .iter_mut()
-            .enumerate()
-            .for_each(|(idx, v)| {
-                *v = sum::expr(
-                    self.data
-                        .iter()
-                        .map(|t| t.condition() * t.values.get(idx).unwrap_or(&default_value).expr()),
-                );
-            });
+        merged_values.iter_mut().enumerate().for_each(|(idx, v)| {
+            *v = sum::expr(
+                self.data
+                    .iter()
+                    .map(|t| t.condition() * t.values.get(idx).unwrap_or(&default_value).expr()),
+            );
+        });
         (selector, merged_values)
     }
 
@@ -114,10 +112,7 @@ impl<F: Field, C: CellType> TableMerger<F, C> {
         self.merge_unsafe()
     }
 
-    fn merge_and_select(
-        &self,
-        _cb: &mut ConstraintBuilder<F, C>,
-    ) -> Vec<Expression<F>> {
+    fn merge_and_select(&self, _cb: &mut ConstraintBuilder<F, C>) -> Vec<Expression<F>> {
         let (selector, v) = self.merge_unsafe();
         v.iter().map(|v| selector.expr() * v.expr()).collect()
     }
@@ -368,12 +363,10 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         self.constraints.clone()
     }
 
-    pub(crate) fn build_lookups(
-        &mut self,
-        meta: &mut ConstraintSystem<F>,
-    ) {
+    pub(crate) fn build_lookups(&mut self, meta: &mut ConstraintSystem<F>) {
         for lookup in self.lookups.iter() {
-            let mut values: Vec<_> = lookup.values
+            let mut values: Vec<_> = lookup
+                .values
                 .iter()
                 .map(|value| value.expr() * lookup.condition())
                 .collect();
@@ -382,13 +375,16 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
             while values.len() < lookup.table.len() {
                 values.push(0.expr());
             }
-            meta.lookup_any(Box::leak(lookup.description.clone().into_boxed_str()), |_meta| {
-                values
-                    .iter()
-                    .zip(lookup.table.iter())
-                    .map(|(v, t)| (v.expr(), t.expr()))
-                    .collect()
-            });
+            meta.lookup_any(
+                Box::leak(lookup.description.clone().into_boxed_str()),
+                |_meta| {
+                    values
+                        .iter()
+                        .zip(lookup.table.iter())
+                        .map(|(v, t)| (v.expr(), t.expr()))
+                        .collect()
+                },
+            );
         }
     }
 
@@ -421,12 +417,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         let challenge = self.lookup_challenge.clone().unwrap();
         let rlc = rlc::expr(&values, challenge.expr()) * self.get_condition_expr();
         let reduced_rlc = self.split_expression("compression", rlc);
-        self.store_expression(
-            description,
-            reduced_rlc,
-            cell_type,
-            None,
-        )
+        self.store_expression(description, reduced_rlc, cell_type, None)
     }
 
     pub(crate) fn store_table(
@@ -438,10 +429,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         self.store_lookup_table(description, cell_type, values);
     }
 
-    pub(crate) fn get_table(
-        &self,
-        cell_type: C,
-    ) -> Vec<Expression<F>> {
+    pub(crate) fn get_table(&self, cell_type: C) -> Vec<Expression<F>> {
         let tables = self.tables.get(&cell_type).unwrap();
         assert!(tables.len() == 1);
         tables[0].values.clone()
@@ -465,11 +453,12 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
     }
 
     pub(crate) fn dynamic_table_merged(&mut self, tag: C) -> Vec<Expression<F>> {
-        let data = self.tables
+        let data = self
+            .tables
             .get(&tag)
             .unwrap_or_else(|| panic!("Dynamic table {:?} not found", tag))
             .clone();
-        let table_merger = TableMerger{
+        let table_merger = TableMerger {
             data,
             _phantom: PhantomData,
         };
@@ -1352,7 +1341,8 @@ macro_rules! circuit {
         use $crate::circuit_tools::constraint_builder::{ExprResult, ExprVec};
         #[allow(unused_imports)]
         use $crate::{
-            _ifx, _matchx, _require, _to_and, _to_values_vec, _to_options_vec,  _unreachablex, concat_with_preamble,
+            _ifx, _matchx, _require, _to_and, _to_options_vec, _to_values_vec, _unreachablex,
+            concat_with_preamble,
         };
 
         #[allow(unused_macros)]
@@ -1415,104 +1405,104 @@ macro_rules! circuit {
 
         #[allow(unused_macros)]
         macro_rules! require {
-                ($lhs:expr => bool) => {{
-                    _require!($cb, $lhs => bool);
-                }};
+                    ($lhs:expr => bool) => {{
+                        _require!($cb, $lhs => bool);
+                    }};
 
-                ($lhs:expr => $rhs:expr) => {{
-                    _require!($cb, $lhs => $rhs);
-                }};
+                    ($lhs:expr => $rhs:expr) => {{
+                        _require!($cb, $lhs => $rhs);
+                    }};
 
-                ($name:expr, $lhs:expr => $rhs:expr) => {{
-                    _require!($cb, $name, $lhs => $rhs);
-                }};
+                    ($name:expr, $lhs:expr => $rhs:expr) => {{
+                        _require!($cb, $name, $lhs => $rhs);
+                    }};
 
-                // Lookups build from table
-                // only reduce flag is allowed
-                ($values:tt =>> @$tag:expr, $options:tt) => {{
-                    let values = _to_values_vec!($values);
-                    let _options = _to_options_vec!($options);
-                    _require!($cb, values =>> @$tag, options);
-                }};
-                ($values:tt =>> @$tag:expr) => {{
-                    use $crate::circuit_tools::constraint_builder::{COMPRESS, REDUCE};
-                    let values = _to_values_vec!($values);
-                    let _options = _to_options_vec!((COMPRESS, REDUCE));
-                    _require!($cb, values =>> @$tag, options);
-                }};
-                ($descr:expr, $values:tt =>> @$tag:expr, $options:tt) => {{
-                    let values = _to_values_vec!($values);
-                    let options = _to_options_vec!($options);
-                    _require!($cb, $descr, values =>> @$tag, options);
-                }};
-                ($descr:expr, $values:tt =>> @$tag:expr) => {{
-                    use $crate::circuit_tools::constraint_builder::{COMPRESS, REDUCE};
-                    let values = _to_values_vec!($values);
-                    let options = _to_options_vec!((COMPRESS, REDUCE));
-                    _require!($cb, $descr, values =>> @$tag, options);
-                }};
+                    // Lookups build from table
+                    // only reduce flag is allowed
+                    ($values:tt =>> @$tag:expr, $options:tt) => {{
+                        let values = _to_values_vec!($values);
+                        let _options = _to_options_vec!($options);
+                        _require!($cb, values =>> @$tag, options);
+                    }};
+                    ($values:tt =>> @$tag:expr) => {{
+                        use $crate::circuit_tools::constraint_builder::{COMPRESS, REDUCE};
+                        let values = _to_values_vec!($values);
+                        let _options = _to_options_vec!((COMPRESS, REDUCE));
+                        _require!($cb, values =>> @$tag, options);
+                    }};
+                    ($descr:expr, $values:tt =>> @$tag:expr, $options:tt) => {{
+                        let values = _to_values_vec!($values);
+                        let options = _to_options_vec!($options);
+                        _require!($cb, $descr, values =>> @$tag, options);
+                    }};
+                    ($descr:expr, $values:tt =>> @$tag:expr) => {{
+                        use $crate::circuit_tools::constraint_builder::{COMPRESS, REDUCE};
+                        let values = _to_values_vec!($values);
+                        let options = _to_options_vec!((COMPRESS, REDUCE));
+                        _require!($cb, $descr, values =>> @$tag, options);
+                    }};
 
-                ($values:tt => @$tag:expr, $options:tt) => {{
-                    let values = _to_values_vec!($values);
-                    let options = _to_options_vec!($options);
-                    _require!($cb, values => @$tag, options);
-                }};
-                ($values:tt => @$table:expr) => {{
-                    let values = _to_values_vec!($values);
-                    _require!($cb, values => @$table);
-                }};
-                ($descr:expr, $values:tt => @$tag:expr, $options:tt) => {{
-                    let values = _to_values_vec!($values);
-                    let options = _to_options_vec!($options);
-                    _require!($cb, $descr, values => @$tag, options);
-                }};
-                ($descr:expr, $values:tt => @$tag:expr) => {{
-                    use $crate::circuit_tools::constraint_builder::{COMPRESS};
-                    let values = _to_values_vec!($values);
-                    let options = _to_options_vec!((COMPRESS));
-                    _require!($cb, $descr, values => @$tag, options);
-                }};
+                    ($values:tt => @$tag:expr, $options:tt) => {{
+                        let values = _to_values_vec!($values);
+                        let options = _to_options_vec!($options);
+                        _require!($cb, values => @$tag, options);
+                    }};
+                    ($values:tt => @$table:expr) => {{
+                        let values = _to_values_vec!($values);
+                        _require!($cb, values => @$table);
+                    }};
+                    ($descr:expr, $values:tt => @$tag:expr, $options:tt) => {{
+                        let values = _to_values_vec!($values);
+                        let options = _to_options_vec!($options);
+                        _require!($cb, $descr, values => @$tag, options);
+                    }};
+                    ($descr:expr, $values:tt => @$tag:expr) => {{
+                        use $crate::circuit_tools::constraint_builder::{COMPRESS};
+                        let values = _to_values_vec!($values);
+                        let options = _to_options_vec!((COMPRESS));
+                        _require!($cb, $descr, values => @$tag, options);
+                    }};
 
-                // Build lookup tables
-                (@$tag:expr, $options:tt => $values:tt) => {{
-                    let values = _to_values_vec!($values);
-                    let options = _to_options_vec!($options);
-                    _require!($cb, @$tag, options => values);
-                }};
-                (@$tag:expr => $values:tt) => {{
-                    let values = _to_values_vec!($values);
-                    _require!($cb, @$tag, Vec::new() => values);
-                }};
-                (@$tag:expr, $options:tt =>> $values:tt) => {{
-                    let values = _to_values_vec!($values);
-                    let options = _to_options_vec!($options);
-                    _require!($cb, @$tag, options =>> values);
-                }};
-                (@$tag:expr =>> $values:tt) => {{
-                    use $crate::circuit_tools::constraint_builder::{COMPRESS, REDUCE};
-                    let values = _to_values_vec!($values);
-                    let options = _to_options_vec!((COMPRESS, REDUCE));
-                    _require!($cb, @$tag, options =>> values);
-                }};
+                    // Build lookup tables
+                    (@$tag:expr, $options:tt => $values:tt) => {{
+                        let values = _to_values_vec!($values);
+                        let options = _to_options_vec!($options);
+                        _require!($cb, @$tag, options => values);
+                    }};
+                    (@$tag:expr => $values:tt) => {{
+                        let values = _to_values_vec!($values);
+                        _require!($cb, @$tag, Vec::new() => values);
+                    }};
+                    (@$tag:expr, $options:tt =>> $values:tt) => {{
+                        let values = _to_values_vec!($values);
+                        let options = _to_options_vec!($options);
+                        _require!($cb, @$tag, options =>> values);
+                    }};
+                    (@$tag:expr =>> $values:tt) => {{
+                        use $crate::circuit_tools::constraint_builder::{COMPRESS, REDUCE};
+                        let values = _to_values_vec!($values);
+                        let options = _to_options_vec!((COMPRESS, REDUCE));
+                        _require!($cb, @$tag, options =>> values);
+                    }};
 
-            }
+                }
 
         #[allow(unused_macros)]
         macro_rules! ifx {
-                ($condition:tt => $when_true:block elsex $when_false:block) => {{
-                    _ifx!($cb, ($condition) => $when_true elsex $when_false)
-                }};
-                ($condition:expr => $when_true:block elsex $when_false:block) => {{
-                    _ifx!($cb, $condition => $when_true elsex $when_false)
-                }};
+                    ($condition:tt => $when_true:block elsex $when_false:block) => {{
+                        _ifx!($cb, ($condition) => $when_true elsex $when_false)
+                    }};
+                    ($condition:expr => $when_true:block elsex $when_false:block) => {{
+                        _ifx!($cb, $condition => $when_true elsex $when_false)
+                    }};
 
-                ($condition:tt => $when_true:block) => {{
-                    _ifx!($cb, $condition => $when_true)
-                }};
-                ($condition:expr => $when_true:block) => {{
-                    _ifx!($cb, $condition => $when_true)
-                }};
-            }
+                    ($condition:tt => $when_true:block) => {{
+                        _ifx!($cb, $condition => $when_true)
+                    }};
+                    ($condition:expr => $when_true:block) => {{
+                        _ifx!($cb, $condition => $when_true)
+                    }};
+                }
 
         #[allow(unused_macros)]
         macro_rules! matchx {

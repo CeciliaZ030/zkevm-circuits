@@ -59,11 +59,8 @@ impl<F: Field> ExtensionBranchConfig<F> {
             config.key_data = KeyData::load(cb, &mut ctx.memory[key_memory(true)], 0.expr());
             // Load the parent values
             for is_s in [true, false] {
-                config.parent_data[is_s.idx()] = ParentData::load(
-                    cb,
-                    &mut ctx.memory[parent_memory(is_s)],
-                    0.expr(),
-                );
+                config.parent_data[is_s.idx()] =
+                    ParentData::load(cb, &mut ctx.memory[parent_memory(is_s)], 0.expr());
                 // A branch cannot follow a placeholder branch
                 require!(config.parent_data[is_s.idx()].is_placeholder => false);
             }

@@ -139,8 +139,7 @@ impl<F: Field> AccountLeafConfig<F> {
             );
             let key_item = ctx.rlp_item(meta, cb, AccountRowType::Key as usize, RlpItemType::Hash);
 
-            config.main_data =
-                MainData::load(cb, &mut ctx.memory[main_memory()], 0.expr());
+            config.main_data = MainData::load(cb, &mut ctx.memory[main_memory()], 0.expr());
 
             // Don't allow an account node to follow an account node
             require!(config.main_data.is_below_account => false);
@@ -160,11 +159,7 @@ impl<F: Field> AccountLeafConfig<F> {
 
                 // Parent data
                 let parent_data = &mut config.parent_data[is_s.idx()];
-                *parent_data = ParentData::load(
-                    cb,
-                    &mut ctx.memory[parent_memory(is_s)],
-                    0.expr(),
-                );
+                *parent_data = ParentData::load(cb, &mut ctx.memory[parent_memory(is_s)], 0.expr());
 
                 // Placeholder leaf checks
                 config.is_placeholder_leaf[is_s.idx()] =

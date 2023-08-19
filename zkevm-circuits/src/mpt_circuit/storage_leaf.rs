@@ -95,8 +95,7 @@ impl<F: Field> StorageLeafConfig<F> {
             );
             let key_item = ctx.rlp_item(meta, cb, StorageRowType::Key as usize, RlpItemType::Hash);
 
-            config.main_data =
-                MainData::load(cb, &mut ctx.memory[main_memory()], 0.expr());
+            config.main_data = MainData::load(cb, &mut ctx.memory[main_memory()], 0.expr());
 
             // Storage leaves always need to be below accounts
             require!(config.main_data.is_below_account => true);
@@ -108,11 +107,7 @@ impl<F: Field> StorageLeafConfig<F> {
             for is_s in [true, false] {
                 // Parent data
                 let parent_data = &mut config.parent_data[is_s.idx()];
-                *parent_data = ParentData::load(
-                    cb,
-                    &mut ctx.memory[parent_memory(is_s)],
-                    0.expr(),
-                );
+                *parent_data = ParentData::load(cb, &mut ctx.memory[parent_memory(is_s)], 0.expr());
                 // Key data
                 let key_data = &mut config.key_data[is_s.idx()];
                 *key_data = KeyData::load(cb, &mut ctx.memory[key_memory(is_s)], 0.expr());

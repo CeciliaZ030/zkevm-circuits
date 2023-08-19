@@ -1,6 +1,9 @@
 //! The MPT circuit implementation.
 use eth_types::Field;
-use gadgets::{impl_expr, util::{Scalar, Expr}};
+use gadgets::{
+    impl_expr,
+    util::{Expr, Scalar},
+};
 use halo2_proofs::{
     circuit::{Layouter, SimpleFloorPlanner, Value},
     plonk::{
@@ -39,19 +42,20 @@ use crate::{
     assign, assignf, circuit,
     circuit_tools::{
         cached_region::CachedRegion,
-        cell_manager::{CellManager, DynamicLookupTable},
+        cell_manager::CellManager,
         memory::{Memory, RwBank},
     },
+    evm_circuit::util::rlc,
     mpt_circuit::{
         helpers::{
-            main_memory, parent_memory, MPTConstraintBuilder, MainRLPGadget, MptCellType,
+            MPTConstraintBuilder, MainRLPGadget, MptCellType,
             MptTableType, FIXED, KECCAK, MULT,
         },
         start::StartConfig,
         storage_leaf::StorageLeafConfig,
     },
-    table::{KeccakTable, MPTProofType, MptTable, LookupTable},
-    util::Challenges, evm_circuit::util::rlc,
+    table::{KeccakTable, LookupTable, MPTProofType, MptTable},
+    util::Challenges,
 };
 use extension_branch::ExtensionBranchConfig;
 use param::HASH_WIDTH;
@@ -204,7 +208,6 @@ pub enum FixedTableTag {
 }
 impl_expr!(FixedTableTag);
 
-
 impl<F: Field> MPTConfig<F> {
     /// Configure MPT Circuit
     pub fn new(
@@ -260,18 +263,14 @@ impl<F: Field> MPTConfig<F> {
             0,
             50,
         );
-        let mut cb = MPTConstraintBuilder::new(
-            5,
-            Some(challenges.clone()),
-            None,
-        );
+        let mut cb = MPTConstraintBuilder::new(5, Some(challenges.clone()), None);
 
         let memory = Memory::new(
             &mut state_cm,
             meta,
             &mut cb.base,
             vec![
-                (MptCellType::MemKeyC, MptCellType::MemKeyC_,  3),
+                (MptCellType::MemKeyC, MptCellType::MemKeyC_, 3),
                 (MptCellType::MemKeyS, MptCellType::MemKeyS_, 3),
                 (MptCellType::MemParentC, MptCellType::MemParentC_, 3),
                 (MptCellType::MemParentS, MptCellType::MemParentS_, 3),
@@ -361,7 +360,6 @@ impl<F: Field> MPTConfig<F> {
                             MptTableType::Fixed => fixed_table.table_exprs(meta),
                             MptTableType::Keccak => keccak_table.table_exprs(meta),
                             MptTableType::Mult => mult_table.table_exprs(meta),
-                            _ => unreachable!(),
                         };
                         let name = format!("{:?}", table);
                         cb.add_lookup(name, vec![column.expr()], vec![rlc::expr(
