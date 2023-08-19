@@ -135,7 +135,7 @@ impl<F: Field> AccountLeafConfig<F> {
                 meta,
                 cb,
                 AccountRowType::Address as usize,
-                RlpItemType::Value,
+                RlpItemType::Address,
             );
             let key_item = ctx.rlp_item(meta, cb, AccountRowType::Key as usize, RlpItemType::Hash);
 

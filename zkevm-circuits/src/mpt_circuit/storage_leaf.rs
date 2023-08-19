@@ -91,7 +91,7 @@ impl<F: Field> StorageLeafConfig<F> {
                 meta,
                 cb,
                 StorageRowType::Address as usize,
-                RlpItemType::Value,
+                RlpItemType::Hash,
             );
             let key_item = ctx.rlp_item(meta, cb, StorageRowType::Key as usize, RlpItemType::Hash);
 

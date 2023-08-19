@@ -147,9 +147,11 @@ pub enum RlpItemType {
     Value,
     /// Hash (string with len == 32)
     Hash,
+    /// Address (string with len == 20)
+    Address,
     /// Key (string with len <= 33)
     Key,
-    /// Nibbles
+    /// Nibbles (raw data)
     Nibbles,
 }
 
@@ -636,10 +638,16 @@ impl<F: Field> MPTConfig<F> {
                         } else {
                             let range = get_range(idx);
                             for byte in 0..range {
-                                assignf!(region, (self.fixed_table[0], offset) => tag.scalar())?;
-                                assignf!(region, (self.fixed_table[1], offset) => idx.scalar())?;
-                                assignf!(region, (self.fixed_table[2], offset) => byte.scalar())?;
-                                offset += 1;
+                                for msb_nonzero_check in [false, true] {
+                                    // Don't put 0 in the table at index 1 when having to do the msb non-zero check
+                                    if !(idx == 1 && byte == 0 && msb_nonzero_check) {
+                                        assignf!(region, (self.fixed_table[0], offset) => tag.scalar())?;
+                                        assignf!(region, (self.fixed_table[1], offset) => idx.scalar())?;
+                                        assignf!(region, (self.fixed_table[2], offset) => byte.scalar())?;
+                                        assignf!(region, (self.fixed_table[3], offset) => msb_nonzero_check.scalar())?;
+                                        offset += 1;
+                                    }
+                                }
                             }
                         }
                     }
@@ -709,7 +717,6 @@ pub struct MPTCircuit<F: Field> {
     pub keccak_data: Vec<Vec<u8>>,
     /// log2(height)
     pub degree: usize,
-    /// disable_preimage_check
     /// Can be used to test artificially created tests with keys without known their known
     /// preimage. ONLY ENABLE FOR TESTS!
     pub disable_preimage_check: bool,
@@ -726,7 +733,10 @@ pub struct MPTCircuitParams {
 
 impl MPTCircuitParams {
     fn is_two_byte_lookup_enabled(&self) -> bool {
-        self.degree >= 22
+        // TODO: currently not enabled because currently the two byte lookup table does not support
+        // msb non-zero check.
+        // self.degree >= 22
+        false
     }
 
     fn is_preimage_check_enabled(&self) -> bool {
@@ -839,7 +849,7 @@ mod tests {
                 }
 
                 let disable_preimage_check = nodes[0].start.clone().unwrap().disable_preimage_check;
-                let degree = 14;
+                let degree = 15;
                 let circuit = MPTCircuit::<Fr> {
                     nodes,
                     keccak_data,

@@ -9,11 +9,14 @@ use crate::{
         gadgets::{IsEqualGadget, IsEqualWordGadget, LtGadget},
         memory::MemoryBank,
     },
-    evm_circuit::util::from_bytes,
+    evm_circuit::{
+        param::{N_BYTES_HALF_WORD, N_BYTES_WORD},
+        util::from_bytes,
+    },
     matchw,
     mpt_circuit::{
         param::{
-            EMPTY_TRIE_HASH, HASH_WIDTH, KEY_LEN_IN_NIBBLES, KEY_PREFIX_EVEN,
+            ADDRESS_WIDTH, EMPTY_TRIE_HASH, HASH_WIDTH, KEY_LEN_IN_NIBBLES, KEY_PREFIX_EVEN,
             KEY_TERMINAL_PREFIX_EVEN, RLP_UNIT_NUM_BYTES, RLP_UNIT_NUM_VALUE_BYTES,
         },
         rlp_gadgets::{get_ext_odd_nibble, get_terminal_odd_nibble},
@@ -1301,6 +1304,7 @@ pub struct MainRLPGadget<F> {
     is_rlp: Cell<F>,
     is_big_endian: Cell<F>,
     is_hash: Cell<F>,
+    ensure_minimal_rlp: Cell<F>,
     keccak_r: Option<Expression<F>>,
 }
 
@@ -1324,6 +1328,7 @@ impl<F: Field> MainRLPGadget<F> {
                 is_rlp: cb.query_cell(),
                 is_big_endian: cb.query_cell(),
                 is_hash: cb.query_cell(),
+                ensure_minimal_rlp: cb.query_cell(),
                 keccak_r: Some(cb.keccak_r.expr()),
             };
             let all_bytes = vec![vec![config.rlp_byte.clone()], config.bytes.clone()].concat();
@@ -1346,7 +1351,7 @@ impl<F: Field> MainRLPGadget<F> {
 
             // Cache the rlc of the hash
             ifx! {config.is_hash.expr() => {
-                require!(config.hash_rlc => config.bytes[..32].rlc_rev(&cb.key_r));
+                require!(config.hash_rlc => config.bytes[..HASH_WIDTH].rlc_rev(&cb.key_r));
             }}
 
             // Cache some RLP related values
@@ -1357,11 +1362,11 @@ impl<F: Field> MainRLPGadget<F> {
                 } elsex {
                     // Special case for single byte string values as those values are stored in the RLP byte itself
                     ifx!{and::expr(&[not!(config.rlp.is_list()), config.rlp.is_short()]) => {
-                        require!(config.rlc_rlp => config.rlp_byte);
                         require!(config.word => [config.rlp_byte.expr(), 0.expr()]);
+                        require!(config.rlc_rlp => config.rlp_byte);
                     } elsex {
-                        let lo = from_bytes::expr(&config.bytes[0..16]);
-                        let hi = from_bytes::expr(&config.bytes[16..32]);
+                        let lo = from_bytes::expr(&config.bytes[0..N_BYTES_HALF_WORD]);
+                        let hi = from_bytes::expr(&config.bytes[N_BYTES_HALF_WORD..N_BYTES_WORD]);
                         require!(config.word => [lo, hi]);
                         require!(config.rlc_rlp => config.rlp_byte.expr().rlc_chain_rev((
                             config.bytes.rlc(&cb.keccak_r.expr()),
@@ -1371,6 +1376,7 @@ impl<F: Field> MainRLPGadget<F> {
                 }}
             }}
 
+            // Check the multiplier values
             // `num_bytes - 1` because the RLP byte is handled separately
             require!((config.rlp.num_bytes() - 1.expr(), config.mult_diff.expr()) => @MULT);
             require!(config.mult_inv.expr() * pow::expr(cb.keccak_r.expr(), RLP_UNIT_NUM_BYTES - 1) => config.mult_diff.expr());
@@ -1381,13 +1387,13 @@ impl<F: Field> MainRLPGadget<F> {
             }}
 
             // Range/zero checks
-            // These range checks ensure that the bytes are all valid byte
-            // values. These lookups also enforce the byte value to be zero when
-            // the byte index >= num_bytes.
-            // We enable dynamic lookups because otherwise these lookup would require a lot of extra
-            // cells.
-            // TODO(Brecht): Ensure minimal RLP encoding: add leading zero check here because for LE
-            // values the MSB is at a variable position
+            // These range checks ensure that
+            // - the bytes are all valid byte values < 256
+            // - the byte value is zero when the byte index >= num_bytes
+            // - the RLP encoding is minimal (when ensure_minimal_rlp is true) by checking that the
+            //   MSB is non-zero (the byte at index 1 (the MSB) is non-zero)
+            // We enable dynamic lookups because otherwise these lookups would require a lot of
+            // extra cells.
             if params.is_two_byte_lookup_enabled() {
                 assert!(all_bytes.len() % 2 == 0);
                 for idx in (0..all_bytes.len()).step_by(2) {
@@ -1400,7 +1406,13 @@ impl<F: Field> MainRLPGadget<F> {
                 }
             } else {
                 for (idx, byte) in all_bytes.iter().enumerate() {
-                    require!((config.tag.expr(), config.num_bytes.expr() - idx.expr(), byte.expr()) => @FIXED, true, true, false);
+                    // Never do any zero check on the RLP byte (which is always allowed to be 0)
+                    let nonzero_check = if idx == 0 {
+                        0.expr()
+                    } else {
+                        config.ensure_minimal_rlp.expr()
+                    };
+                    require!((config.tag.expr(), config.num_bytes.expr() - idx.expr(), byte.expr(), nonzero_check) => @FIXED, true, true, false);
                 }
             }
 
@@ -1493,6 +1505,7 @@ impl<F: Field> MainRLPGadget<F> {
         assign!(region, self.is_rlp, offset => (item_type != RlpItemType::Nibbles).scalar())?;
         assign!(region, self.is_big_endian, offset => self.is_big_endian(item_type).scalar())?;
         assign!(region, self.is_hash, offset => (item_type == RlpItemType::Hash).scalar())?;
+        assign!(region, self.ensure_minimal_rlp, offset => ((item_type == RlpItemType::Value) || rlp.is_list()).scalar())?;
 
         Ok(rlp)
     }
@@ -1506,12 +1519,14 @@ impl<F: Field> MainRLPGadget<F> {
     ) -> RLPItemView<F> {
         circuit!([meta, cb.base], {
             let is_string = self.rlp.is_string_at(meta, rot);
+            let is_list = self.rlp.is_list_at(meta, rot);
             let tag = self.tag.rot(meta, rot);
             let max_len = self.max_len.rot(meta, rot);
             let len = self.len.rot(meta, rot);
             let is_rlp = self.is_rlp.rot(meta, rot);
             let is_big_endian = self.is_big_endian.rot(meta, rot);
             let is_hash = self.is_hash.rot(meta, rot);
+            let ensure_minimal_rlp = self.ensure_minimal_rlp.rot(meta, rot);
 
             // Check the tag value
             require!(tag => self.tag(item_type).expr());
@@ -1519,10 +1534,15 @@ impl<F: Field> MainRLPGadget<F> {
             if item_type == RlpItemType::Value || item_type == RlpItemType::Key {
                 require!(is_string => true);
             }
-            // Hashes always are strings and have length 32
+            // Hashes always are strings and have length HASH_WIDTH
             if item_type == RlpItemType::Hash {
                 require!(is_string => true);
                 require!(len => HASH_WIDTH);
+            }
+            // Addresses always are strings and have length ADDRESS_WIDTH
+            if item_type == RlpItemType::Address {
+                require!(is_string => true);
+                require!(len => ADDRESS_WIDTH);
             }
             if item_type == RlpItemType::Node {
                 // Nodes always have length 0 or 32 when a string, or are < 32 when a list
@@ -1539,6 +1559,7 @@ impl<F: Field> MainRLPGadget<F> {
             require!(is_rlp => self.is_rlp(item_type));
             require!(is_big_endian => self.is_big_endian(item_type));
             require!(is_hash => (item_type == RlpItemType::Hash));
+            require!(ensure_minimal_rlp => or::expr([(item_type == RlpItemType::Value).expr(), is_list]));
         });
         RLPItemView {
             is_big_endian: self.is_big_endian(item_type),
@@ -1575,6 +1596,7 @@ impl<F: Field> MainRLPGadget<F> {
             RlpItemType::Node => 32,
             RlpItemType::Value => 32,
             RlpItemType::Hash => 32,
+            RlpItemType::Address => 20,
             RlpItemType::Key => 33,
             RlpItemType::Nibbles => 32,
         }
