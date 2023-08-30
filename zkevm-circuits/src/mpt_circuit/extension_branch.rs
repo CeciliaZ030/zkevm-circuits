@@ -15,7 +15,6 @@ use crate::{
     circuit_tools::{cached_region::CachedRegion, cell_manager::Cell},
     mpt_circuit::{
         helpers::{key_memory, parent_memory, Indexable, KeyData, ParentData},
-        witness_row::ExtensionBranchRowType,
         MPTConfig, MptMemory,
     },
     util::word::Word,
@@ -37,11 +36,6 @@ impl<F: Field> ExtensionBranchConfig<F> {
         cb: &mut MPTConstraintBuilder<F>,
         ctx: &mut MPTContext<F>,
     ) -> Self {
-        cb.base
-            .cell_manager
-            .as_mut()
-            .unwrap()
-            .reset(ExtensionBranchRowType::Count as usize);
         let mut config = ExtensionBranchConfig::default();
 
         circuit!([meta, cb], {

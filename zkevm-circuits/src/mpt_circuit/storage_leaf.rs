@@ -56,11 +56,6 @@ impl<F: Field> StorageLeafConfig<F> {
         cb: &mut MPTConstraintBuilder<F>,
         ctx: &mut MPTContext<F>,
     ) -> Self {
-        cb.base
-            .cell_manager
-            .as_mut()
-            .unwrap()
-            .reset(StorageRowType::Count as usize);
         let mut config = StorageLeafConfig::default();
 
         circuit!([meta, cb], {
@@ -91,7 +86,7 @@ impl<F: Field> StorageLeafConfig<F> {
                 meta,
                 cb,
                 StorageRowType::Address as usize,
-                RlpItemType::Value,
+                RlpItemType::Hash,
             );
             let key_item = ctx.rlp_item(meta, cb, StorageRowType::Key as usize, RlpItemType::Hash);
 

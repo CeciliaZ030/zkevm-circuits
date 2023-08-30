@@ -45,12 +45,8 @@ use crate::{
         cell_manager::CellManager,
         memory::{Memory, RwBank},
     },
-    evm_circuit::util::rlc,
     mpt_circuit::{
-        helpers::{
-            MPTConstraintBuilder, MainRLPGadget, MptCellType,
-            MptTableType, FIXED, KECCAK, MULT,
-        },
+        helpers::{MPTConstraintBuilder, MainRLPGadget, MptCellType, MptTableType},
         start::StartConfig,
         storage_leaf::StorageLeafConfig,
     },
@@ -153,9 +149,11 @@ pub enum RlpItemType {
     Value,
     /// Hash (string with len == 32)
     Hash,
+    /// Address (string with len == 20)
+    Address,
     /// Key (string with len <= 33)
     Key,
-    /// Nibbles
+    /// Nibbles (raw data)
     Nibbles,
 }
 
@@ -231,53 +229,59 @@ impl<F: Field> MPTConfig<F> {
         let mult_table: [Column<Advice>; 2] =
             [meta.advice_column(), meta.advice_column_in(SecondPhase)];
 
+        let mut cb = MPTConstraintBuilder::new(5, Some(challenges), None);
+
+        meta.create_gate("MPT lookup tables", |meta| {
+            circuit!([meta, cb], {
+                require!(@MptTableType::Keccak => keccak_table.table_exprs(meta));
+                require!(@MptTableType::Byte => vec![fixed_table.table_exprs(meta)[2].clone()]);
+                require!(@MptTableType::Fixed => fixed_table.table_exprs(meta));
+                require!(@MptTableType::Mult => mult_table.table_exprs(meta));
+            });
+            vec![0.expr()]
+        });
+
         let mut state_machine = StateMachineConfig::construct(meta);
         let mut rlp_item = MainRLPGadget::default();
 
-        let rlp_cm = CellManager::new(
-            meta,
-            // Type, #cols, phase, permutable
-            vec![
-                (MptCellType::StoragePhase1, 60, 1, false),
-                (MptCellType::StoragePhase2, 5, 2, false),
-                (MptCellType::StoragePhase3, 5, 3, false),
-                (MptCellType::LookupByte, 4, 1, false),
-                (MptCellType::Lookup(MptTableType::Fixed), 4, 3, false),
-                (MptCellType::Lookup(MptTableType::Mult), 2, 3, false),
-            ],
-            0,
-            1,
-        );
-        let mut state_cm = CellManager::new(
-            meta,
-            // Type, #cols, phase, permutable
-            vec![
-                (MptCellType::StoragePhase1, 20, 1, false),
-                (MptCellType::StoragePhase2, 6, 2, false),
-                (MptCellType::StoragePhase3, 5, 3, false),
-                (MptCellType::LookupByte, 4, 1, false),
-                (MptCellType::Lookup(MptTableType::Fixed), 3, 3, false),
-                (MptCellType::Lookup(MptTableType::Keccak), 1, 3, false),
-                (MptCellType::Lookup(MptTableType::Mult), 2, 3, false),
-            ],
-            0,
-            50,
-        );
-        let mut cb = MPTConstraintBuilder::new(5, Some(challenges.clone()), None);
+        let lu = MptCellType::Lookup;
 
-        let memory = Memory::new(
-            &mut state_cm,
+        let mut rlp_cm = CellManager::new(1, 0);
+        rlp_cm.add_columns(meta, &mut cb.base, MptCellType::StoragePhase1, 0, false, 60);
+        rlp_cm.add_columns(meta, &mut cb.base, MptCellType::StoragePhase2, 1, false, 5);
+        rlp_cm.add_columns(meta, &mut cb.base, MptCellType::StoragePhase3, 2, false, 5);
+        rlp_cm.add_columns(meta, &mut cb.base, lu(MptTableType::Byte), 0, false, 4);
+        rlp_cm.add_columns(meta, &mut cb.base, lu(MptTableType::Fixed), 2, false, 4);
+        rlp_cm.add_columns(meta, &mut cb.base, lu(MptTableType::Mult), 2, false, 2);
+
+        let mut state_cm = CellManager::new(50, 0);
+        state_cm.add_columns(meta, &mut cb.base, MptCellType::StoragePhase1, 0, false, 20);
+        state_cm.add_columns(meta, &mut cb.base, MptCellType::StoragePhase2, 1, false, 6);
+        state_cm.add_columns(meta, &mut cb.base, MptCellType::StoragePhase3, 2, false, 5);
+        state_cm.add_columns(meta, &mut cb.base, lu(MptTableType::Byte), 0, false, 4);
+        state_cm.add_columns(meta, &mut cb.base, lu(MptTableType::Fixed), 2, false, 3);
+        state_cm.add_columns(meta, &mut cb.base, lu(MptTableType::Keccak), 2, false, 1);
+        state_cm.add_columns(meta, &mut cb.base, lu(MptTableType::Mult), 2, false, 2);
+
+        let mut memory = Memory::new();
+        memory.add_rw(meta, &mut cb.base, &mut state_cm, MptCellType::MemKeyC, 2);
+        memory.add_rw(meta, &mut cb.base, &mut state_cm, MptCellType::MemKeyS, 2);
+        memory.add_rw(
             meta,
             &mut cb.base,
-            vec![
-                (MptCellType::MemKeyC, MptCellType::MemKeyC_, 3),
-                (MptCellType::MemKeyS, MptCellType::MemKeyS_, 3),
-                (MptCellType::MemParentC, MptCellType::MemParentC_, 3),
-                (MptCellType::MemParentS, MptCellType::MemParentS_, 3),
-                (MptCellType::MemMain, MptCellType::MemMain_, 3),
-            ],
-            0,
+            &mut state_cm,
+            MptCellType::MemParentC,
+            2,
         );
+        memory.add_rw(
+            meta,
+            &mut cb.base,
+            &mut state_cm,
+            MptCellType::MemParentS,
+            2,
+        );
+        memory.add_rw(meta, &mut cb.base, &mut state_cm, MptCellType::MemMain, 2);
+
         let mut ctx = MPTContext {
             mpt_table,
             rlp_item: rlp_item.clone(),
@@ -286,11 +290,6 @@ impl<F: Field> MPTConfig<F> {
         };
         meta.create_gate("MPT", |meta| {
             circuit!([meta, cb], {
-                // Populate lookup tables
-                cb.store_table("keccak", KECCAK, keccak_table.table_exprs(meta));
-                cb.store_table("fixed", FIXED, fixed_table.table_exprs(meta));
-                cb.store_table("mult", MULT, mult_table.table_exprs(meta));
-
                 ifx!{f!(q_enable) => {
                     // Mult table verification
                     ifx! {f!(q_first) => {
@@ -302,7 +301,7 @@ impl<F: Field> MPTConfig<F> {
 
                     // RLP item decoding unit
                     cb.base.set_cell_manager(rlp_cm.clone());
-                    cb.base.push_region(MPTRegion::RLP as usize);
+                    cb.base.push_region(MPTRegion::RLP as usize, 1);
                     rlp_item = MainRLPGadget::construct(&mut cb, params);
                     cb.base.pop_region();
                     ctx.rlp_item = rlp_item.clone();
@@ -317,28 +316,28 @@ impl<F: Field> MPTConfig<F> {
                     matchx! {(
                         a!(state_machine.is_start) => {
                             state_machine.step_constraints(meta, &mut cb, StartRowType::Count as usize);
-                            cb.base.push_region(MPTRegion::Start as usize);
+                            cb.base.push_region(MPTRegion::Start as usize, StartRowType::Count as usize);
                             state_machine.start_config = StartConfig::configure(meta, &mut cb, &mut ctx);
                             ctx.memory.build_constraints(&mut cb.base, f!(q_first));
                             cb.base.pop_region();
                         },
                         a!(state_machine.is_branch) => {
                             state_machine.step_constraints(meta, &mut cb, ExtensionBranchRowType::Count as usize);
-                            cb.base.push_region(MPTRegion::Branch as usize);
+                            cb.base.push_region(MPTRegion::Branch as usize, ExtensionBranchRowType::Count as usize);
                             state_machine.branch_config = ExtensionBranchConfig::configure(meta, &mut cb, &mut ctx);
                             ctx.memory.build_constraints(&mut cb.base, f!(q_first));
                             cb.base.pop_region();
                         },
                         a!(state_machine.is_account) => {
                             state_machine.step_constraints(meta, &mut cb, AccountRowType::Count as usize);
-                            cb.base.push_region(MPTRegion::Account as usize);
+                            cb.base.push_region(MPTRegion::Account as usize, AccountRowType::Count as usize);
                             state_machine.account_config = AccountLeafConfig::configure(meta, &mut cb, &mut ctx);
                             ctx.memory.build_constraints(&mut cb.base, f!(q_first));
                             cb.base.pop_region();
                         },
                         a!(state_machine.is_storage) => {
                             state_machine.step_constraints(meta, &mut cb, StorageRowType::Count as usize);
-                            cb.base.push_region(MPTRegion::Storage as usize);
+                            cb.base.push_region(MPTRegion::Storage as usize, StorageRowType::Count as usize);
                             state_machine.storage_config = StorageLeafConfig::configure(meta, &mut cb, &mut ctx);
                             ctx.memory.build_constraints(&mut cb.base, f!(q_first));
                             cb.base.pop_region();
@@ -351,29 +350,6 @@ impl<F: Field> MPTConfig<F> {
                     }}
                 }}
             });
-
-            // Set up stored lookups
-            for cell_manager in [&rlp_cm, &state_cm] {
-                for column in cell_manager.columns().iter() {
-                    if let MptCellType::Lookup(table) = column.cell_type {
-                        let table_expressions = match table {
-                            MptTableType::Fixed => fixed_table.table_exprs(meta),
-                            MptTableType::Keccak => keccak_table.table_exprs(meta),
-                            MptTableType::Mult => mult_table.table_exprs(meta),
-                        };
-                        let name = format!("{:?}", table);
-                        cb.add_lookup(name, vec![column.expr()], vec![rlc::expr(
-                            &table_expressions,
-                            cb.base.lookup_challenge.clone().unwrap(),
-                        )]);
-                    }
-                    if let MptCellType::LookupByte = column.cell_type {
-                        let byte_table_expression = fixed_table.table_exprs(meta)[2].clone();
-                        cb.add_lookup("Byte lookup".to_string(), vec![column.expr()], vec![byte_table_expression]);
-                    }
-                }
-            }
-
             cb.base.build_constraints()
         });
 
@@ -536,8 +512,6 @@ impl<F: Field> MPTConfig<F> {
             },
         )?;
 
-        // memory.assign(layouter, height)?;
-
         Ok(height)
     }
 
@@ -596,10 +570,16 @@ impl<F: Field> MPTConfig<F> {
                         } else {
                             let range = get_range(idx);
                             for byte in 0..range {
-                                assignf!(region, (self.fixed_table[0], offset) => tag.scalar())?;
-                                assignf!(region, (self.fixed_table[1], offset) => idx.scalar())?;
-                                assignf!(region, (self.fixed_table[2], offset) => byte.scalar())?;
-                                offset += 1;
+                                for msb_nonzero_check in [false, true] {
+                                    // Don't put 0 in the table at index 1 when having to do the msb non-zero check
+                                    if !(idx == 1 && byte == 0 && msb_nonzero_check) {
+                                        assignf!(region, (self.fixed_table[0], offset) => tag.scalar())?;
+                                        assignf!(region, (self.fixed_table[1], offset) => idx.scalar())?;
+                                        assignf!(region, (self.fixed_table[2], offset) => byte.scalar())?;
+                                        assignf!(region, (self.fixed_table[3], offset) => msb_nonzero_check.scalar())?;
+                                        offset += 1;
+                                    }
+                                }
                             }
                         }
                     }
@@ -669,7 +649,6 @@ pub struct MPTCircuit<F: Field> {
     pub keccak_data: Vec<Vec<u8>>,
     /// log2(height)
     pub degree: usize,
-    /// disable_preimage_check
     /// Can be used to test artificially created tests with keys without known their known
     /// preimage. ONLY ENABLE FOR TESTS!
     pub disable_preimage_check: bool,
@@ -686,7 +665,10 @@ pub struct MPTCircuitParams {
 
 impl MPTCircuitParams {
     fn is_two_byte_lookup_enabled(&self) -> bool {
-        self.degree >= 22
+        // TODO: currently not enabled because currently the two byte lookup table does not support
+        // msb non-zero check.
+        // self.degree >= 22
+        false
     }
 
     fn is_preimage_check_enabled(&self) -> bool {
@@ -799,7 +781,7 @@ mod tests {
                 }
 
                 let disable_preimage_check = nodes[0].start.clone().unwrap().disable_preimage_check;
-                let degree = 14;
+                let degree = 15;
                 let circuit = MPTCircuit::<Fr> {
                     nodes,
                     keccak_data,

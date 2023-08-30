@@ -30,11 +30,6 @@ impl<F: Field> StartConfig<F> {
         cb: &mut MPTConstraintBuilder<F>,
         ctx: &mut MPTContext<F>,
     ) -> Self {
-        cb.base
-            .cell_manager
-            .as_mut()
-            .unwrap()
-            .reset(StartRowType::Count as usize);
         let mut config = StartConfig::default();
 
         circuit!([meta, cb], {

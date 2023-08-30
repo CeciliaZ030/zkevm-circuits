@@ -20,10 +20,9 @@ use super::{
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Memory<F: Field, C: CellType, MB: MemoryBank<F, C>> {
-    // TODO(Cecilia): want to use dynamic dispatch
-    // i.e. dyn MemoryBank<F, C> but trait with generic param is not object safe
-    pub(crate) banks: HashMap<C, MB>,
+    banks: HashMap<C, MB>,
     _phantom: PhantomData<F>,
+    tag_counter: usize,
 }
 
 impl<F: Field, C: CellType, MB: MemoryBank<F, C>> Index<C> for Memory<F, C, MB> {
@@ -49,24 +48,31 @@ impl<F: Field, C: CellType, MB: MemoryBank<F, C>> IndexMut<C> for Memory<F, C, M
 }
 
 impl<F: Field, C: CellType, MB: MemoryBank<F, C>> Memory<F, C, MB> {
-    pub(crate) fn new(
-        cm: &mut CellManager<F, C>,
+    pub(crate) fn new() -> Self {
+        Self {
+            banks: HashMap::new(),
+            _phantom: PhantomData,
+            tag_counter: 0,
+        }
+    }
+
+    pub(crate) fn add_rw(
+        &mut self,
         meta: &mut ConstraintSystem<F>,
         cb: &mut ConstraintBuilder<F, C>,
-        tags: Vec<(C, C, u8)>,
-        offset: usize,
-    ) -> Self {
-        let mut banks = HashMap::new();
-        tags.into_iter().for_each(|(data_tag, table_tag, phase)| {
-            banks.insert(
-                data_tag,
-                MB::new(meta, cb, cm, (data_tag, table_tag), phase, offset),
-            );
-        });
-        Self {
-            banks,
-            _phantom: PhantomData,
-        }
+        cm: &mut CellManager<F, C>,
+        tag: C,
+        phase: u8,
+    ) -> &MB {
+        let table_tag = self.allocate_tag();
+        let bank = MB::new(meta, cb, cm, (tag, table_tag), phase);
+        self.add(bank)
+    }
+
+    pub(crate) fn add(&mut self, memory_bank: MB) -> &MB {
+        let tag = memory_bank.tag();
+        self.banks.insert(tag, memory_bank);
+        &self.banks[&tag]
     }
 
     pub(crate) fn get_columns(&self) -> Vec<Column<Advice>> {
@@ -97,8 +103,10 @@ impl<F: Field, C: CellType, MB: MemoryBank<F, C>> Memory<F, C, MB> {
         Ok(())
     }
 
-    pub(crate) fn tags(&self) -> Vec<C> {
-        self.banks.iter().map(|(_, bank)| bank.tag().0).collect()
+    pub(crate) fn allocate_tag(&mut self) -> C {
+        let tag = C::create_type(self.tag_counter);
+        self.tag_counter += 1;
+        tag
     }
 }
 
@@ -109,7 +117,6 @@ pub(crate) trait MemoryBank<F: Field, C: CellType>: Clone {
         cm: &mut CellManager<F, C>,
         tag: (C, C),
         phase: u8,
-        offset: usize,
     ) -> Self;
     fn store(
         &mut self,
@@ -123,7 +130,7 @@ pub(crate) trait MemoryBank<F: Field, C: CellType>: Clone {
         values: &[Expression<F>],
     );
     fn columns(&self) -> Vec<Column<Advice>>;
-    fn tag(&self) -> (C, C);
+    fn tag(&self) -> C;
     fn witness_store(&mut self, offset: usize, values: &[F]);
     fn witness_load(&self, offset: usize) -> Vec<F>;
     fn build_constraints(&self, cb: &mut ConstraintBuilder<F, C>, q_start: Expression<F>);
@@ -144,7 +151,6 @@ pub(crate) struct RwBank<F, C> {
     stored_values: Vec<Vec<F>>,
     cur: Expression<F>,
     next: Expression<F>,
-    // TODO(Cecilia): get rid of this when we kill regions
     local_conditions: Vec<(usize, Expression<F>)>,
 }
 
@@ -172,14 +178,12 @@ impl<F: Field, C: CellType> MemoryBank<F, C> for RwBank<F, C> {
         cm: &mut CellManager<F, C>,
         tag: (C, C),
         phase: u8,
-        offset: usize,
     ) -> Self {
         let rw: Vec<Column<Advice>> = [tag.0, tag.1]
             .iter()
             .map(|t| {
-                let config = (t.clone(), 1usize, phase, false);
-                cm.add_celltype(meta, config, offset);
-                cm.get_typed_columns(t.clone())[0].column
+                cm.add_columns(meta, cb, *t, phase, false, 1);
+                cm.get_typed_columns(*t)[0].column
             })
             .collect();
         let key = meta.advice_column();
@@ -219,7 +223,7 @@ impl<F: Field, C: CellType> MemoryBank<F, C> for RwBank<F, C> {
         cb.store_tuple(
             Box::leak(format!("{:?} store", self.tag.1).into_boxed_str()),
             self.tag.1,
-            insert_key(key.expr(), &values),
+            insert_key(key.expr(), values),
         );
         self.local_conditions
             .push((cb.region_id, cb.get_condition_expr()));
@@ -235,12 +239,12 @@ impl<F: Field, C: CellType> MemoryBank<F, C> for RwBank<F, C> {
         cb.store_tuple(
             Box::leak(format!("{:?} load", self.tag.0).into_boxed_str()),
             self.tag.0,
-            insert_key(self.key() - load_offset.expr(), &values),
+            insert_key(self.key() - load_offset.expr(), values),
         );
     }
 
-    fn tag(&self) -> (C, C) {
-        self.tag
+    fn tag(&self) -> C {
+        self.tag.0
     }
 
     fn columns(&self) -> Vec<Column<Advice>> {
