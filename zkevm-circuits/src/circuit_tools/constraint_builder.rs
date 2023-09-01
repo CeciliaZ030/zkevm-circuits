@@ -8,7 +8,8 @@ use std::{
 
 use crate::{
     evm_circuit::util::rlc,
-    util::{word::Word, Expr},
+    table::LookupTable,
+    util::{query_expression, word::Word, Expr},
 };
 use eth_types::Field;
 use gadgets::util::{and, sum, Scalar};
@@ -391,26 +392,6 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         }
     }
 
-    pub(crate) fn store_lookup_table(
-        &mut self,
-        description: &'static str,
-        table_type: C::TableType,
-        values: Vec<Expression<F>>,
-    ) {
-        let data = TableData {
-            description,
-            local_condition: self.get_condition_expr(),
-            regional_condition: get_condition_expr(&self.state_context),
-            values,
-            region_id: self.region_id,
-        };
-        if let Some(tables) = self.tables.get_mut(&table_type) {
-            tables.push(data);
-        } else {
-            self.tables.insert(table_type, vec![data]);
-        }
-    }
-
     pub(crate) fn store_tuple(
         &mut self,
         description: &'static str,
@@ -423,13 +404,61 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         self.store_expression(description, reduced_rlc, cell_type, None)
     }
 
+    /// Store the table as is without taking into account any active conditions
+    pub(crate) fn load_table(
+        &mut self,
+        meta: &mut ConstraintSystem<F>,
+        table_type: C::TableType,
+        table: &dyn LookupTable<F>,
+    ) {
+        query_expression(meta, |meta| {
+            let description = format!("{:?}", table_type);
+            self.store_table_with_condition(
+                Box::leak(description.into_boxed_str()),
+                table_type,
+                table.table_exprs(meta),
+                1.expr(),
+                1.expr(),
+            );
+        });
+    }
+
+    /// Store the table taking into account the current active conditions
     pub(crate) fn store_table(
         &mut self,
         description: &'static str,
         table_type: C::TableType,
         values: Vec<Expression<F>>,
     ) {
-        self.store_lookup_table(description, table_type, values);
+        self.store_table_with_condition(
+            description,
+            table_type,
+            values,
+            self.get_condition_expr(),
+            get_condition_expr(&self.state_context),
+        );
+    }
+
+    pub(crate) fn store_table_with_condition(
+        &mut self,
+        description: &'static str,
+        table_type: C::TableType,
+        values: Vec<Expression<F>>,
+        local_condition: Expression<F>,
+        regional_condition: Expression<F>,
+    ) {
+        let data = TableData {
+            description,
+            local_condition,
+            regional_condition,
+            values,
+            region_id: self.region_id,
+        };
+        if let Some(tables) = self.tables.get_mut(&table_type) {
+            tables.push(data);
+        } else {
+            self.tables.insert(table_type, vec![data]);
+        }
     }
 
     pub(crate) fn table(&self, table_type: C::TableType) -> Vec<Expression<F>> {
@@ -1108,7 +1137,6 @@ macro_rules! _require {
     ($cb:expr, $descr:expr, $values:expr => @$table:expr) => {{
         $cb.add_lookup(
             Box::leak($descr.into_boxed_str()),
-            $tag,
             $values,
             $table,
         );
@@ -1372,43 +1400,38 @@ macro_rules! circuit {
 
         #[allow(unused_macros)]
         macro_rules! require {
-                                ($lhs:expr => bool) => {{
-                                    _require!($cb, $lhs => bool);
-                                }};
-
-                                ($lhs:expr => $rhs:expr) => {{
-                                    _require!($cb, $lhs => $rhs);
-                                }};
-
-                                ($name:expr, $lhs:expr => $rhs:expr) => {{
-                                    _require!($cb, $name, $lhs => $rhs);
-                                }};
-
-                                // Store tuple
-                                ($values:tt =>> @$tag:expr) => {{
-                                    let values = _to_values_vec!($values);
-                                    _require!($cb, values =>> @$tag);
-                                }};
-                                ($descr:expr, $values:tt =>> @$tag:expr) => {{
-                                    let values = _to_values_vec!($values);
-                                    _require!($cb, $descr, values =>> @$tag);
-                                }};
-
-                                // Do lookups
-                                ($values:tt => @$table:expr) => {{
-                                    let values = _to_values_vec!($values);
-                                    _require!($cb, values => @$table);
-                                }};
-                                ($descr:expr, $values:tt => @$table:expr) => {{
-                                    let values = _to_values_vec!($values);
-                                    _require!($cb, $descr, values => @$table);
-                                }};
-
-                                // Build lookup tables
-                                (@$table:expr => $values:expr) => {{
-                                    _require!($cb, @$table => $values);
-                                }};
-                            }
+            ($lhs:expr => bool) => {{
+                _require!($cb, $lhs => bool);
+            }};
+            ($lhs:expr => $rhs:expr) => {{
+                _require!($cb, $lhs => $rhs);
+            }};
+            ($name:expr, $lhs:expr => $rhs:expr) => {{
+                _require!($cb, $name, $lhs => $rhs);
+            }};
+            // Store tuple
+            ($values:tt =>> @$tag:expr) => {{
+                let values = _to_values_vec!($values);
+                _require!($cb, values =>> @$tag);
+            }};
+            ($descr:expr, $values:tt =>> @$tag:expr) => {{
+                let values = _to_values_vec!($values);
+                _require!($cb, $descr, values =>> @$tag);
+            }};
+            // Do lookups
+            ($values:tt => @$table:expr) => {{
+                let values = _to_values_vec!($values);
+                _require!($cb, values => @$table);
+            }};
+            ($descr:expr, $values:tt => @$table:expr) => {{
+                let values = _to_values_vec!($values);
+                _require!($cb, $descr, values => @$table);
+            }};
+            // Build lookup tables
+            (@$table:expr => $values:expr) => {{
+                _require!($cb, @$table => $values);
+            }};
+        }
 
         #[allow(unused_macros)]
         macro_rules! ifx {

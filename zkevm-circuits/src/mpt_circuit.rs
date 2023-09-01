@@ -1,9 +1,6 @@
 //! The MPT circuit implementation.
 use eth_types::Field;
-use gadgets::{
-    impl_expr,
-    util::{Expr, Scalar},
-};
+use gadgets::{impl_expr, util::Scalar};
 use halo2_proofs::{
     circuit::{Layouter, SimpleFloorPlanner, Value},
     plonk::{
@@ -50,7 +47,7 @@ use crate::{
         start::StartConfig,
         storage_leaf::StorageLeafConfig,
     },
-    table::{KeccakTable, LookupTable, MPTProofType, MptTable},
+    table::{KeccakTable, MPTProofType, MptTable},
     util::Challenges,
 };
 use extension_branch::ExtensionBranchConfig;
@@ -231,15 +228,11 @@ impl<F: Field> MPTConfig<F> {
 
         let mut cb = MPTConstraintBuilder::new(5, Some(challenges), None);
 
-        meta.create_gate("MPT lookup tables", |meta| {
-            circuit!([meta, cb], {
-                require!(@MptTableType::Keccak => keccak_table.table_exprs(meta));
-                require!(@MptTableType::Byte => vec![fixed_table.table_exprs(meta)[2].clone()]);
-                require!(@MptTableType::Fixed => fixed_table.table_exprs(meta));
-                require!(@MptTableType::Mult => mult_table.table_exprs(meta));
-            });
-            vec![0.expr()]
-        });
+        // Load premade lookup tables
+        cb.load_table(meta, MptTableType::Keccak, &keccak_table);
+        cb.load_table(meta, MptTableType::Byte, &[fixed_table[2]]);
+        cb.load_table(meta, MptTableType::Fixed, &fixed_table);
+        cb.load_table(meta, MptTableType::Mult, &mult_table);
 
         let mut state_machine = StateMachineConfig::construct(meta);
         let mut rlp_item = MainRLPGadget::default();

@@ -21,6 +21,7 @@ use crate::{
         },
         rlp_gadgets::{get_ext_odd_nibble, get_terminal_odd_nibble},
     },
+    table::LookupTable,
     util::{
         word::{self, Word},
         Challenges, Expr,
@@ -30,7 +31,7 @@ use eth_types::{Field, Word as U256};
 use gadgets::util::{not, or, pow, Scalar};
 use halo2_proofs::{
     circuit::Value,
-    plonk::{Error, Expression, VirtualCells},
+    plonk::{ConstraintSystem, Error, Expression, VirtualCells},
 };
 use strum_macros::EnumIter;
 
@@ -1022,6 +1023,15 @@ impl<F: Field> MPTConstraintBuilder<F> {
         table: Vec<Expression<F>>,
     ) {
         self.base.add_lookup(description, values, table);
+    }
+
+    pub(crate) fn load_table(
+        &mut self,
+        meta: &mut ConstraintSystem<F>,
+        tag: MptTableType,
+        table: &dyn LookupTable<F>,
+    ) {
+        self.base.load_table(meta, tag, table)
     }
 
     pub(crate) fn store_table(
