@@ -39,7 +39,7 @@ use crate::{
     assign, assignf, circuit,
     circuit_tools::{
         cached_region::{CachedRegion, AssignParams},
-        cell_manager::{CellManager, CellColumn},
+        cell_manager::{CellManager},
         memory::{Memory, RwBank},
     },
     mpt_circuit::{

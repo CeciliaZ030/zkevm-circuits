@@ -10,7 +10,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use super::{cell_manager::{CellType, CellColumn}, constraint_builder::ConstraintBuilder};
+use super::{cell_manager::{CellType, CellColumn}};
 
 pub trait ChallengeSet<F: Field> {
     fn indexed(&self) -> Vec<&Value<F>>;

@@ -13,7 +13,7 @@ use crate::{
 };
 use eth_types::Field;
 use gadgets::util::{and, sum, Scalar};
-use halo2_proofs::{plonk::{ConstraintSystem, Expression, Column, Advice, VirtualCells, Selector, Fixed}, poly::Rotation};
+use halo2_proofs::{plonk::{ConstraintSystem, Expression, Column, Advice}};
 use itertools::Itertools;
 
 use super::{
