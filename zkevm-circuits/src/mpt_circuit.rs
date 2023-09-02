@@ -39,7 +39,7 @@ use crate::{
     assign, assignf, circuit,
     circuit_tools::{
         cached_region::CachedRegion,
-        cell_manager::CellManager,
+        cell_manager::{CellManager, CellColumn},
         memory::{Memory, RwBank},
     },
     mpt_circuit::{
@@ -48,7 +48,7 @@ use crate::{
         storage_leaf::StorageLeafConfig,
     },
     table::{KeccakTable, MPTProofType, MptTable},
-    util::Challenges,
+    util::{Challenges},
 };
 use extension_branch::ExtensionBranchConfig;
 use param::HASH_WIDTH;
@@ -180,6 +180,7 @@ pub struct MPTConfig<F: Field> {
     rlp_item: MainRLPGadget<F>,
     state_machine: StateMachineConfig<F>,
     params: MPTCircuitParams,
+    cell_columns: Vec<CellColumn<F, MptCellType>>,
     cb: MPTConstraintBuilder<F>,
 }
 
@@ -351,6 +352,7 @@ impl<F: Field> MPTConfig<F> {
         if disable_lookups == 0 {
             cb.base.build_lookups(meta);
         }
+        let cell_columns = [rlp_cm.columns(), state_cm.columns()].concat();
 
         println!("max expression degree: {}", meta.degree());
         println!("num lookups: {}", meta.lookups().len());
@@ -370,6 +372,7 @@ impl<F: Field> MPTConfig<F> {
             rlp_item,
             params,
             mpt_table,
+            cell_columns,
             cb,
         }
     }
@@ -397,6 +400,7 @@ impl<F: Field> MPTConfig<F> {
                         &mut region,
                         keccak_r,
                     );
+                    cached_region.annotate_columns(&self.cell_columns);
 
                     let item_types = if node.start.is_some() {
                         NODE_RLP_TYPES_START.to_vec()

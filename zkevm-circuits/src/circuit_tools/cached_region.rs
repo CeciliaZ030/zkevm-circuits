@@ -10,7 +10,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use super::{cell_manager::CellType, constraint_builder::ConstraintBuilder};
+use super::{cell_manager::{CellType, CellColumn}, constraint_builder::ConstraintBuilder};
 
 pub trait ChallengeSet<F: Field> {
     fn indexed(&self) -> Vec<&Value<F>>;
@@ -69,6 +69,16 @@ impl<'r, 'b, F: Field> CachedRegion<'r, 'b, F> {
             }
         }
         Ok(())
+    }
+
+    pub(crate) fn annotate_columns<C: CellType>(&mut self, cell_columns: &[CellColumn<F, C>]) {
+        for c in cell_columns {
+            self.region
+                .name_column(
+                    || format!("{:?} {:?}: {:?} queried", c.cell_type.clone(), c.index, c.height),
+                     c.column
+                );
+        }
     }
 
     /// Assign an advice column value (witness).
