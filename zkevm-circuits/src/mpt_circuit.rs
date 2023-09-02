@@ -38,7 +38,7 @@ use self::{
 use crate::{
     assign, assignf, circuit,
     circuit_tools::{
-        cached_region::CachedRegion,
+        cached_region::{CachedRegion, AssignParams},
         cell_manager::{CellManager, CellColumn},
         memory::{Memory, RwBank},
     },
@@ -180,8 +180,7 @@ pub struct MPTConfig<F: Field> {
     rlp_item: MainRLPGadget<F>,
     state_machine: StateMachineConfig<F>,
     params: MPTCircuitParams,
-    cell_columns: Vec<CellColumn<F, MptCellType>>,
-    cb: MPTConstraintBuilder<F>,
+    assign_params: AssignParams<F, MptCellType>,
 }
 
 /// Enumerator to determine the type of row in the fixed table.
@@ -352,7 +351,11 @@ impl<F: Field> MPTConfig<F> {
         if disable_lookups == 0 {
             cb.base.build_lookups(meta);
         }
-        let cell_columns = [rlp_cm.columns(), state_cm.columns()].concat();
+        let assign_params = AssignParams {
+            stored_expressions: cb.base.stored_expressions,
+            cell_columns: [rlp_cm.columns(), state_cm.columns()].concat(),
+        };
+        
 
         println!("max expression degree: {}", meta.degree());
         println!("num lookups: {}", meta.lookups().len());
@@ -372,8 +375,7 @@ impl<F: Field> MPTConfig<F> {
             rlp_item,
             params,
             mpt_table,
-            cell_columns,
-            cb,
+            assign_params,
         }
     }
 
@@ -400,7 +402,7 @@ impl<F: Field> MPTConfig<F> {
                         &mut region,
                         keccak_r,
                     );
-                    cached_region.annotate_columns(&self.cell_columns);
+                    cached_region.annotate_columns(&self.assign_params.cell_columns);
 
                     let item_types = if node.start.is_some() {
                         NODE_RLP_TYPES_START.to_vec()
@@ -488,7 +490,10 @@ impl<F: Field> MPTConfig<F> {
 
                     memory.assign(&mut cached_region, offset)?;
 
-                    cached_region.assign_stored_expressions(&self.cb.base, challenges)?;
+                    cached_region.assign_stored_expressions(
+                        &self.assign_params.stored_expressions, 
+                        challenges
+                    )?;
                 }
                 height = offset;
 

@@ -22,6 +22,12 @@ impl<F: Field, V: AsRef<[Value<F>]>> ChallengeSet<F> for V {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct AssignParams<F, C: CellType> {
+    pub(crate) stored_expressions: HashMap<usize, Vec<StoredExpression<F, C>>>,
+    pub(crate) cell_columns: Vec<CellColumn<F, C>>,
+}
+
 pub struct CachedRegion<'r, 'b, F: Field> {
     region: &'r mut Region<'b, F>,
     pub advice: HashMap<(usize, usize), F>,
@@ -59,11 +65,11 @@ impl<'r, 'b, F: Field> CachedRegion<'r, 'b, F> {
 
     pub(crate) fn assign_stored_expressions<C: CellType, S: ChallengeSet<F>>(
         &mut self,
-        cb: &ConstraintBuilder<F, C>,
+        stored_expression: &HashMap<usize, Vec<StoredExpression<F, C>>>,
         challenges: &S,
     ) -> Result<(), Error> {
         for (offset, region_id) in self.regions.clone() {
-            for stored_expression in cb.get_stored_expressions(region_id).iter() {
+            for stored_expression in stored_expression[&region_id].iter() {
                 // println!("stored expression: {}", stored_expression.name);
                 stored_expression.assign(self, challenges, offset)?;
             }
