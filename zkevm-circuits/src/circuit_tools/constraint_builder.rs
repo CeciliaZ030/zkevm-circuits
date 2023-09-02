@@ -13,7 +13,7 @@ use crate::{
 };
 use eth_types::Field;
 use gadgets::util::{and, sum, Scalar};
-use halo2_proofs::plonk::{ConstraintSystem, Expression};
+use halo2_proofs::plonk::{ConstraintSystem, Expression, Column, Advice};
 use itertools::Itertools;
 
 use super::{
@@ -130,6 +130,8 @@ pub struct ConstraintBuilder<F, C: CellType> {
     max_degree: usize,
     /// conditions for constraints
     conditions: Vec<Expression<F>>,
+    /// Columns whoes equality constraints needed to be enable
+    equalities: Vec<Column<Advice>>,
     /// The tables
     pub tables: HashMap<C::TableType, Vec<TableData<F>>>,
     /// Lookups
@@ -162,6 +164,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
             max_global_degree: max_degree,
             max_degree,
             conditions: Vec::new(),
+            equalities: Vec::new(),
             tables: HashMap::new(),
             lookups: Vec::new(),
             cell_manager,
@@ -177,6 +180,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
     pub(crate) fn restart(&mut self) {
         self.constraints.clear();
         self.conditions.clear();
+        self.equalities.clear();
         self.tables.clear();
         self.lookups.clear();
         self.stored_expressions.clear();
@@ -252,6 +256,10 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
             set.iter()
                 .fold(1.expr(), |acc, item| acc * (value.clone() - item.clone())),
         );
+    }
+
+    pub(crate) fn enable_equality(&mut self, column: Column<Advice>){
+        self.equalities.push(column);
     }
 
     pub(crate) fn condition<R>(
@@ -367,6 +375,14 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         self.constraints.clone()
     }
 
+    pub(crate) fn build_equalities(&self, meta: &mut ConstraintSystem<F>) {
+        self.equalities
+            .iter()
+            .for_each(|c| {
+                meta.enable_equality(c.clone())}
+            );
+    }
+    
     pub(crate) fn build_lookups(&mut self, meta: &mut ConstraintSystem<F>) {
         for lookup in self.lookups.iter() {
             let mut values: Vec<_> = lookup
