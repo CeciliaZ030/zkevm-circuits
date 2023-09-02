@@ -281,69 +281,67 @@ impl<F: Field> MPTConfig<F> {
             memory: memory.clone(),
             params,
         };
-        meta.create_gate("MPT", |meta| {
+        meta.create_gate("MPT", |meta: &mut VirtualCells<'_, F>| {
             circuit!([meta, cb], {
-                ifx!{f!(q_enable) => {
-                    // Mult table verification
-                    ifx! {f!(q_first) => {
-                        require!(a!(mult_table[0]) => 0);
-                        require!(a!(mult_table[1]) => 1);
-                    }}
-                    require!(a!(mult_table[0], 1) => a!(mult_table[0]) + 1.expr());
-                    require!(a!(mult_table[1], 1) => a!(mult_table[1]) * cb.keccak_r.expr());
+                // Mult table verification
+                ifx! {f!(q_first) => {
+                    require!(a!(mult_table[0]) => 0);
+                    require!(a!(mult_table[1]) => 1);
+                }}
+                require!(a!(mult_table[0], 1) => a!(mult_table[0]) + 1.expr());
+                require!(a!(mult_table[1], 1) => a!(mult_table[1]) * cb.keccak_r.expr());
 
-                    // RLP item decoding unit
-                    cb.base.set_cell_manager(rlp_cm.clone());
-                    cb.base.push_region(MPTRegion::RLP as usize, 1);
-                    rlp_item = MainRLPGadget::construct(&mut cb, params);
-                    cb.base.pop_region();
-                    ctx.rlp_item = rlp_item.clone();
+                // RLP item decoding unit
+                cb.base.set_cell_manager(rlp_cm.clone());
+                cb.base.push_region(MPTRegion::RLP as usize, 1);
+                rlp_item = MainRLPGadget::construct(&mut cb, params);
+                cb.base.pop_region();
+                ctx.rlp_item = rlp_item.clone();
 
-                    // Main MPT circuit
-                    // State machine
-                    cb.base.set_cell_manager(state_cm.clone());
-                    ifx! {f!(q_first) + f!(q_last) => {
-                        require!(a!(state_machine.is_start) => true);
-                    }};
-                    // Main state machine
-                    matchx! {(
-                        a!(state_machine.is_start) => {
-                            state_machine.step_constraints(meta, &mut cb, StartRowType::Count as usize);
-                            cb.base.push_region(MPTRegion::Start as usize, StartRowType::Count as usize);
-                            state_machine.start_config = StartConfig::configure(meta, &mut cb, &mut ctx);
-                            ctx.memory.build_constraints(&mut cb.base, f!(q_first));
-                            cb.base.pop_region();
-                        },
-                        a!(state_machine.is_branch) => {
-                            state_machine.step_constraints(meta, &mut cb, ExtensionBranchRowType::Count as usize);
-                            cb.base.push_region(MPTRegion::Branch as usize, ExtensionBranchRowType::Count as usize);
-                            state_machine.branch_config = ExtensionBranchConfig::configure(meta, &mut cb, &mut ctx);
-                            ctx.memory.build_constraints(&mut cb.base, f!(q_first));
-                            cb.base.pop_region();
-                        },
-                        a!(state_machine.is_account) => {
-                            state_machine.step_constraints(meta, &mut cb, AccountRowType::Count as usize);
-                            cb.base.push_region(MPTRegion::Account as usize, AccountRowType::Count as usize);
-                            state_machine.account_config = AccountLeafConfig::configure(meta, &mut cb, &mut ctx);
-                            ctx.memory.build_constraints(&mut cb.base, f!(q_first));
-                            cb.base.pop_region();
-                        },
-                        a!(state_machine.is_storage) => {
-                            state_machine.step_constraints(meta, &mut cb, StorageRowType::Count as usize);
-                            cb.base.push_region(MPTRegion::Storage as usize, StorageRowType::Count as usize);
-                            state_machine.storage_config = StorageLeafConfig::configure(meta, &mut cb, &mut ctx);
-                            ctx.memory.build_constraints(&mut cb.base, f!(q_first));
-                            cb.base.pop_region();
-                        },
-                        _ => ctx.memory.build_constraints(&mut cb.base, f!(q_first)),
-                    )};
-                    // Only account and storage rows can have lookups, disable lookups on all other rows
-                    ifx! {not!(a!(state_machine.is_account) + a!(state_machine.is_storage)) => {
-                        require!(a!(ctx.mpt_table.proof_type) => MPTProofType::Disabled.expr());
-                    }}
+                // Main MPT circuit
+                // State machine
+                cb.base.set_cell_manager(state_cm.clone());
+                ifx! {f!(q_first) + f!(q_last) => {
+                    require!(a!(state_machine.is_start) => true);
+                }};
+                // Main state machine
+                matchx! {(
+                    a!(state_machine.is_start) => {
+                        state_machine.step_constraints(meta, &mut cb, StartRowType::Count as usize);
+                        cb.base.push_region(MPTRegion::Start as usize, StartRowType::Count as usize);
+                        state_machine.start_config = StartConfig::configure(meta, &mut cb, &mut ctx);
+                        ctx.memory.build_constraints(&mut cb.base, f!(q_first));
+                        cb.base.pop_region();
+                    },
+                    a!(state_machine.is_branch) => {
+                        state_machine.step_constraints(meta, &mut cb, ExtensionBranchRowType::Count as usize);
+                        cb.base.push_region(MPTRegion::Branch as usize, ExtensionBranchRowType::Count as usize);
+                        state_machine.branch_config = ExtensionBranchConfig::configure(meta, &mut cb, &mut ctx);
+                        ctx.memory.build_constraints(&mut cb.base, f!(q_first));
+                        cb.base.pop_region();
+                    },
+                    a!(state_machine.is_account) => {
+                        state_machine.step_constraints(meta, &mut cb, AccountRowType::Count as usize);
+                        cb.base.push_region(MPTRegion::Account as usize, AccountRowType::Count as usize);
+                        state_machine.account_config = AccountLeafConfig::configure(meta, &mut cb, &mut ctx);
+                        ctx.memory.build_constraints(&mut cb.base, f!(q_first));
+                        cb.base.pop_region();
+                    },
+                    a!(state_machine.is_storage) => {
+                        state_machine.step_constraints(meta, &mut cb, StorageRowType::Count as usize);
+                        cb.base.push_region(MPTRegion::Storage as usize, StorageRowType::Count as usize);
+                        state_machine.storage_config = StorageLeafConfig::configure(meta, &mut cb, &mut ctx);
+                        ctx.memory.build_constraints(&mut cb.base, f!(q_first));
+                        cb.base.pop_region();
+                    },
+                    _ => ctx.memory.build_constraints(&mut cb.base, f!(q_first)),
+                )};
+                // Only account and storage rows can have lookups, disable lookups on all other rows
+                ifx! {not!(a!(state_machine.is_account) + a!(state_machine.is_storage)) => {
+                    require!(a!(ctx.mpt_table.proof_type) => MPTProofType::Disabled.expr());
                 }}
             });
-            cb.base.build_constraints()
+            cb.base.build_constraints_selected(meta.query_fixed(q_enable, Rotation::cur()))
         });
 
         let disable_lookups: usize = var("DISABLE_LOOKUPS")

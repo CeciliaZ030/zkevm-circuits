@@ -13,7 +13,7 @@ use crate::{
 };
 use eth_types::Field;
 use gadgets::util::{and, sum, Scalar};
-use halo2_proofs::plonk::{ConstraintSystem, Expression, Column, Advice};
+use halo2_proofs::{plonk::{ConstraintSystem, Expression, Column, Advice, VirtualCells, Selector, Fixed}, poly::Rotation};
 use itertools::Itertools;
 
 use super::{
@@ -373,6 +373,18 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
             return vec![("No constraints", 0.expr())];
         }
         self.constraints.clone()
+    }
+
+    pub(crate) fn build_constraints_selected(&self, selector: Expression<F>) -> Vec<(&'static str, Expression<F>)> {
+        if self.constraints.is_empty() {
+            return vec![("No constraints", 0.expr())];
+        }
+        self.constraints
+            .iter()
+            .map(|(name, c)| 
+                (*name, selector.expr() * c.clone())
+            )
+            .collect()
     }
 
     pub(crate) fn build_equalities(&self, meta: &mut ConstraintSystem<F>) {
