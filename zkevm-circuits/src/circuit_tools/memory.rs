@@ -93,11 +93,11 @@ impl<F: Field, C: CellType, MB: MemoryBank<F, C>> Memory<F, C, MB> {
     }
 
     pub(crate) fn assign(
-        &self,
+        &mut self,
         region: &mut CachedRegion<'_, '_, F>,
         height: usize,
     ) -> Result<(), Error> {
-        for (_, bank) in self.banks.iter() {
+        for (_, bank) in self.banks.iter_mut() {
             bank.assign(region, height)?;
         }
         Ok(())
@@ -134,7 +134,7 @@ pub(crate) trait MemoryBank<F: Field, C: CellType>: Clone {
     fn witness_store(&mut self, offset: usize, values: &[F]);
     fn witness_load(&self, offset: usize) -> Vec<F>;
     fn build_constraints(&self, cb: &mut ConstraintBuilder<F, C>, q_start: Expression<F>);
-    fn assign(&self, region: &mut CachedRegion<'_, '_, F>, height: usize) -> Result<(), Error>;
+    fn assign(&mut self, region: &mut CachedRegion<'_, '_, F>, height: usize) -> Result<(), Error>;
 }
 
 pub(crate) fn insert_key<V: Clone>(key: V, values: &[V]) -> Vec<V> {
@@ -152,6 +152,7 @@ pub(crate) struct RwBank<F, C> {
     cur: Expression<F>,
     next: Expression<F>,
     local_conditions: Vec<(usize, Expression<F>)>,
+    last_assigned_offset: usize,
 }
 
 impl<F: Field, C: CellType> RwBank<F, C> {
@@ -211,6 +212,7 @@ impl<F: Field, C: CellType> MemoryBank<F, C> for RwBank<F, C> {
             cur,
             next,
             local_conditions: Vec::new(),
+            last_assigned_offset: 0,
         }
     }
 
@@ -276,13 +278,12 @@ impl<F: Field, C: CellType> MemoryBank<F, C> for RwBank<F, C> {
         self.stored_values[self.stored_values.len() - 1 - offset].clone()
     }
 
-    fn assign(&self, region: &mut CachedRegion<'_, '_, F>, height: usize) -> Result<(), Error> {
+    fn assign(&mut self, region: &mut CachedRegion<'_, '_, F>, height: usize) -> Result<(), Error> {
         // Pad to the full circuit (necessary for reads)
         let mut store_offsets = self.store_offsets.clone();
         store_offsets.push(height);
 
-        // TODO(Brecht): partial updates
-        let mut offset = 0;
+        let mut offset = self.last_assigned_offset;
         for (store_index, &stored_offset) in store_offsets.iter().enumerate() {
             while offset <= stored_offset {
                 region.assign_advice(
@@ -294,6 +295,7 @@ impl<F: Field, C: CellType> MemoryBank<F, C> for RwBank<F, C> {
                 offset += 1;
             }
         }
+        self.last_assigned_offset = height;
         Ok(())
     }
 }

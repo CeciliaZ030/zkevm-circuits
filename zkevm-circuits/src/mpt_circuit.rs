@@ -662,9 +662,8 @@ pub struct MPTCircuitParams {
 
 impl MPTCircuitParams {
     fn is_two_byte_lookup_enabled(&self) -> bool {
-        // TODO: currently not enabled because currently the two byte lookup table does not support
-        // msb non-zero check.
-        // self.degree >= 22
+        // Currently not enabled because the two byte lookup table does not support msb non-zero
+        // check.
         false
     }
 
