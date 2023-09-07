@@ -13,7 +13,7 @@ use crate::{
 };
 use eth_types::Field;
 use gadgets::util::{and, sum, Scalar};
-use halo2_proofs::plonk::{ConstraintSystem, Expression, Column, Advice};
+use halo2_proofs::plonk::{Advice, Column, ConstraintSystem, Expression};
 use itertools::Itertools;
 
 use super::{
@@ -258,7 +258,7 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
         );
     }
 
-    pub(crate) fn enable_equality(&mut self, column: Column<Advice>){
+    pub(crate) fn enable_equality(&mut self, column: Column<Advice>) {
         self.equalities.push(column);
     }
 
@@ -378,11 +378,9 @@ impl<F: Field, C: CellType> ConstraintBuilder<F, C> {
     pub(crate) fn build_equalities(&self, meta: &mut ConstraintSystem<F>) {
         self.equalities
             .iter()
-            .for_each(|c| {
-                meta.enable_equality(c.clone())}
-            );
+            .for_each(|c| meta.enable_equality(*c));
     }
-    
+
     pub(crate) fn build_lookups(&mut self, meta: &mut ConstraintSystem<F>) {
         for lookup in self.lookups.iter() {
             let mut values: Vec<_> = lookup

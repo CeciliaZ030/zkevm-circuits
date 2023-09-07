@@ -39,7 +39,7 @@ use crate::{
     assign, assignf, circuit,
     circuit_tools::{
         cached_region::CachedRegion,
-        cell_manager::{CellManager, CellColumn},
+        cell_manager::{CellColumn, CellManager},
         memory::{Memory, RwBank},
     },
     mpt_circuit::{
@@ -48,7 +48,7 @@ use crate::{
         storage_leaf::StorageLeafConfig,
     },
     table::{KeccakTable, MPTProofType, MptTable},
-    util::{Challenges},
+    util::Challenges,
 };
 use extension_branch::ExtensionBranchConfig;
 use param::HASH_WIDTH;
