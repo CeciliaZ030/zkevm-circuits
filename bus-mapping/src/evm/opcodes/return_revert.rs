@@ -11,7 +11,6 @@ use eth_types::{evm_types::INVALID_INIT_CODE_FIRST_BYTE, Bytecode, GethExecStep,
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct ReturnRevert;
 
-// TODO: rename to indicate this handles REVERT (and maybe STOP)?
 impl Opcode for ReturnRevert {
     fn gen_associated_ops(
         state: &mut CircuitInputStateRef,
@@ -207,14 +206,10 @@ fn handle_create(
     source: Source,
 ) -> Result<H256, Error> {
     let values = state.call_ctx()?.memory.0[source.offset..source.offset + source.length].to_vec();
-    let code_hash = CodeDB::hash(&values);
+    let bytecode = Bytecode::from(values);
+    let code_hash = bytecode.hash_h256();
+    let bytes = bytecode.code_vec();
     let dst_id = NumberOrHash::Hash(code_hash);
-    let bytes: Vec<_> = Bytecode::from(values)
-        .code
-        .iter()
-        .map(|element| (element.value, element.is_code))
-        .collect();
-
     let rw_counter_start = state.block_ctx.rwc;
     for (i, (byte, _)) in bytes.iter().enumerate() {
         state.push_op(

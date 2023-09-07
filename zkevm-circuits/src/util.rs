@@ -17,8 +17,8 @@ pub use gadgets::util::Expr;
 
 /// Cell Manager
 pub mod cell_manager;
-/// Cell Manager strategies
-pub mod cell_manager_strategy;
+/// Cell Placement strategies
+pub mod cell_placement_strategy;
 
 /// Steal the expression from gate
 pub fn query_expression<F: Field, T>(
@@ -190,13 +190,13 @@ pub(crate) fn keccak(msg: &[u8]) -> Word {
     Word::from_big_endian(keccak256(msg).as_slice())
 }
 
-pub(crate) fn is_push(byte: u8) -> bool {
-    OpcodeId::from(byte).is_push()
+pub(crate) fn is_push_with_data(byte: u8) -> bool {
+    OpcodeId::from(byte).is_push_with_data()
 }
 
 pub(crate) fn get_push_size(byte: u8) -> u64 {
-    if is_push(byte) {
-        byte as u64 - OpcodeId::PUSH1.as_u64() + 1
+    if is_push_with_data(byte) {
+        byte as u64 - OpcodeId::PUSH0.as_u64()
     } else {
         0u64
     }
