@@ -6,7 +6,7 @@ use crate::{
             common_gadget::CommonErrorGadget,
             constraint_builder::{ConstrainBuilderCommon, EVMConstraintBuilder},
             math_gadget::IsEqualGadget,
-            memory_gadget::MemoryAddressGadget,
+            memory_gadget::{CommonMemoryAddressGadget, MemoryAddressGadget},
             CachedRegion, Cell,
         },
         witness::{Block, Call, ExecStep, Transaction},
@@ -52,13 +52,8 @@ impl<F: Field> ExecutionGadget<F> for ErrorInvalidCreationCodeGadget<F> {
             is_first_byte_invalid.expr(),
         );
 
-        let common_error_gadget = CommonErrorGadget::construct_with_return_data(
-            cb,
-            opcode.expr(),
-            5.expr(),
-            memory_address.offset(),
-            memory_address.length(),
-        );
+        let common_error_gadget =
+            CommonErrorGadget::construct(cb, opcode.expr(), cb.rw_counter_offset());
 
         Self {
             opcode,
