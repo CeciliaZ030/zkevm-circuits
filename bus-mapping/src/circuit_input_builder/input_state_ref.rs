@@ -10,8 +10,8 @@ use crate::{
     exec_trace::OperationRef,
     operation::{
         AccountField, AccountOp, CallContextField, CallContextOp, MemoryOp, Op, OpEnum, Operation,
-        StackOp, Target, TxAccessListAccountOp, TxLogField, TxLogOp, TxReceiptField, TxReceiptOp,
-        RW,
+        RWCounter, StackOp, Target, TxAccessListAccountOp, TxLogField, TxLogOp, TxReceiptField,
+        TxReceiptOp, RW,
     },
     state_db::{CodeDB, StateDB},
     Error,
@@ -52,7 +52,7 @@ impl<'a> CircuitInputStateRef<'a> {
             geth_step,
             call_ctx,
             self.block_ctx.rwc,
-            self.chunk_ctxs.last().unwrap().rwc,
+            RWCounter::default(),
             call_ctx.reversible_write_counter,
             self.tx_ctx.log_id,
         ))
@@ -64,7 +64,7 @@ impl<'a> CircuitInputStateRef<'a> {
             exec_state: ExecState::BeginTx,
             gas_left: self.tx.gas(),
             rwc: self.block_ctx.rwc,
-            rwc_inner_chunk: self.chunk_ctxs.last().unwrap().rwc,
+            rwc_inner_chunk: self.block_ctx.rwc,
             ..Default::default()
         }
     }
@@ -100,7 +100,7 @@ impl<'a> CircuitInputStateRef<'a> {
                 0
             },
             rwc: self.block_ctx.rwc,
-            rwc_inner_chunk: self.chunk_ctxs.last().unwrap().rwc,
+            rwc_inner_chunk: RWCounter::default(),
             // For tx without code execution
             reversible_write_counter: if let Some(call_ctx) = self.tx_ctx.calls().last() {
                 call_ctx.reversible_write_counter
@@ -125,7 +125,7 @@ impl<'a> CircuitInputStateRef<'a> {
             exec_state: ExecState::BeginChunk,
             gas_left: self.tx.gas(),
             rwc: self.block_ctx.rwc,
-            rwc_inner_chunk: self.chunk_ctxs.last().unwrap().rwc,
+            //rwc_inner_chunk: self.chunk_ctxs.last().unwrap().rwc,
             ..Default::default()
         };
         begin_step
@@ -141,10 +141,26 @@ impl<'a> CircuitInputStateRef<'a> {
         let end_step = ExecStep {
             exec_state: ExecState::EndChunk,
             rwc: self.block_ctx.rwc,
-            rwc_inner_chunk: self.chunk_ctxs.last().unwrap().rwc,
+            //rwc_inner_chunk: self.chunk_ctxs.last().unwrap().rwc,
             ..Default::default()
         };
         end_step
+    }
+
+    /// WIP: push a new chunk_ctx on the stack and update the existing ones.
+    pub fn push_chunk_ctx(&mut self, ctx: ChunkContext) {
+        self.chunk_ctxs.push(ctx);
+        // It is inefficient that we do this on every push instead of only the last, but works for
+        // now.
+        self.update_total_chunks();
+    }
+
+    /// WIP: update the field chunk_ctx. to the total number in stack.
+    pub fn update_total_chunks(&mut self) {
+        let total_chunks = self.chunk_ctxs.len();
+        for chunk_ctx in self.chunk_ctxs.iter_mut() {
+            chunk_ctx.total_chunks = total_chunks;
+        }
     }
 
     /// Push an [`Operation`](crate::operation::Operation) into the
@@ -159,7 +175,7 @@ impl<'a> CircuitInputStateRef<'a> {
         }
         let op_ref = self.block.container.insert(Operation::new(
             self.block_ctx.rwc.inc_pre(),
-            self.chunk_ctxs.last_mut().unwrap().rwc.inc_pre(),
+            RWCounter::default(),
             rw,
             op,
         ));
@@ -225,7 +241,7 @@ impl<'a> CircuitInputStateRef<'a> {
         self.check_apply_op(&op.clone().into_enum());
         let op_ref = self.block.container.insert(Operation::new_reversible(
             self.block_ctx.rwc.inc_pre(),
-            self.chunk_ctxs.last_mut().unwrap().rwc.inc_pre(),
+            RWCounter::default(),
             RW::WRITE,
             op,
         ));

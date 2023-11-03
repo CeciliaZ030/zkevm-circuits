@@ -250,6 +250,7 @@ impl Transaction {
             id,
             tx: eth_tx.into(),
             calls: vec![call],
+            // shouldn't this do something with eth_tx
             steps: Vec::new(),
         })
     }

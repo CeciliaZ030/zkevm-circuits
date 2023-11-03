@@ -75,7 +75,8 @@ const NUM_BLINDING_ROWS: usize = 64;
 ///     .run();
 /// ```
 pub struct CircuitTestBuilder<const NACC: usize, const NTX: usize> {
-    test_ctx: Option<TestContext<NACC, NTX>>,
+    /// blablabla
+    pub test_ctx: Option<TestContext<NACC, NTX>>,
     circuits_params: Option<FixedCParams>,
     block: Option<Block<Fr>>,
     evm_checks: Box<dyn Fn(MockProver<Fr>, &Vec<usize>, &Vec<usize>)>,

@@ -45,7 +45,7 @@ use std::{collections::HashMap, ops::Deref};
 pub use transaction::{Transaction, TransactionContext};
 
 /// Maximum number of transactions in one chunk.
-pub const MAX_CHUNK_SIZE: usize = 300;
+pub const MAX_CHUNK_SIZE: usize = 2;
 
 /// Circuit Setup Parameters
 #[derive(Debug, Clone, Copy)]
@@ -153,6 +153,7 @@ impl<'a, C: CircuitsParams> CircuitInputBuilder<C> {
         let total_rw_count: usize = block.txs.iter().map(|tx| tx.steps().len()).sum();
         let chunk_size = 42;
         let total_chunks = (total_rw_count + chunk_size - 1) / chunk_size; // div_ceil is nightly only.
+        // This wont work, because we don't really know how many chunks we will have.
         let chunk_ctxs = (0..total_chunks).map(|i| ChunkContext::new(i, total_chunks)).collect_vec();
         Self {
             sdb,
@@ -256,15 +257,33 @@ impl<'a, C: CircuitsParams> CircuitInputBuilder<C> {
         )?;
         tx.steps_mut().push(begin_tx_step);
 
-        // Here we are inside the tx where we can inject an `EndChunk` `BeginChunk` pair if global
-        // `RWCounter` is too high. If we do it before the loop, we are always chunking in
-        // the beginning of a transaction, which may not be optimal.
         let state_ref = self.state_ref(&mut tx, &mut tx_ctx);
-        log::trace!("Chunk :: injecting `EndChunk` `BeginChunk` sequence.");
-        let end_step = state_ref.new_end_chunk_step();
-        let begin_step = state_ref.new_end_chunk_step();
-        let chunk_exec_steps = [end_step, begin_step];
-        tx.steps_mut().extend(chunk_exec_steps);
+        let _block_rwc: usize = state_ref.block_ctx.rwc.into();
+        let _tx_rwc: usize = tx.steps().last().unwrap().rwc.into();
+        // let tx_rwc_inner = tx.steps().last().unwrap().rwc_inner_chunk.into();
+        let _tx_rwc_inner = 42; // tx.steps().last().unwrap().rwc_inner_chunk.into();
+        //dbg!("handle_tx", block_rwc, tx_rwc, tx_rwc_inner);
+        // what is the correct chunking condition?
+        // let chunk_condition = MAX_CHUNK_SIZE < tx_rwc_inner;
+        let chunk_condition = true;
+        if chunk_condition {
+            // Here we are inside the tx where we can inject an `EndChunk` `BeginChunk` pair if
+            // global `RWCounter` is too high. If we do it before the loop, we are
+            // always chunking in the beginning of a transaction, which may not be
+            // optimal.
+            let mut state_ref = self.state_ref(&mut tx, &mut tx_ctx);
+            log::trace!("Chunk :: injecting `EndChunk` `BeginChunk` sequence.");
+            let end_step = state_ref.new_end_chunk_step();
+            let begin_step = state_ref.new_begin_chunk_step();
+            state_ref.tx.steps_mut().extend([end_step, begin_step]);
+
+            // push chunk_ctx
+            log::trace!("Chunk :: pushing `ChunkCtx`");
+            let chunk_index = state_ref.chunk_ctxs.len();
+            let total_chunks =  state_ref.chunk_ctxs.len()+1;
+            let ctx: ChunkContext = ChunkContext::new(chunk_index, total_chunks);
+            state_ref.push_chunk_ctx(ctx);
+        }
 
         for (index, geth_step) in geth_trace.struct_logs.iter().enumerate() {
             let mut state_ref = self.state_ref(&mut tx, &mut tx_ctx);
@@ -353,8 +372,8 @@ impl CircuitInputBuilder<FixedCParams> {
         let mut end_block_last = self.block.block_steps.end_block_last.clone();
         end_block_not_last.rwc = self.block_ctx.rwc;
         end_block_last.rwc = self.block_ctx.rwc;
-        end_block_not_last.rwc_inner_chunk = self.chunk_ctxs.last().unwrap().rwc;
-        end_block_last.rwc_inner_chunk = self.chunk_ctxs.last().unwrap().rwc;
+        end_block_not_last.rwc_inner_chunk = RWCounter::default();
+        end_block_last.rwc_inner_chunk = RWCounter::default();
         let is_first_chunk = self.chunk_ctxs.len()==1;
 
         let mut dummy_tx = Transaction::default();
