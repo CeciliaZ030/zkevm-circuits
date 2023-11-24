@@ -113,6 +113,10 @@ impl Block {
             );
         }
 
+        // let ipb_txs: Vec<super::transaction::Transaction> =
+        // eth_block.transactions.iter().map(Transaction::from).collect();
+        let ipb_txs = vec![];
+
         Ok(Self {
             chain_id,
             history_hashes,
@@ -130,7 +134,7 @@ impl Block {
             base_fee: eth_block.base_fee_per_gas.unwrap_or_default(),
             prev_state_root,
             container: OperationContainer::new(),
-            txs: Vec::new(),
+            txs: ipb_txs,
             block_steps: BlockSteps {
                 begin_chunk: ExecStep {
                     exec_state: ExecState::BeginChunk,

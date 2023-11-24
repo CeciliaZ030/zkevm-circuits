@@ -5,6 +5,8 @@ mod access;
 mod block;
 mod call;
 mod chunk;
+#[cfg(test)]
+mod chunk_tests;
 mod execution;
 mod input_state_ref;
 #[cfg(test)]
@@ -41,6 +43,9 @@ use itertools::Itertools;
 use log::warn;
 use std::{collections::HashMap, ops::Deref};
 pub use transaction::{Transaction, TransactionContext};
+
+/// Maximum number of transactions in one chunk.
+pub const MAX_CHUNK_SIZE: usize = 2;
 
 /// Circuit Setup Parameters
 #[derive(Debug, Clone, Copy)]
@@ -136,22 +141,27 @@ pub struct CircuitInputBuilder<C: CircuitsParams> {
     pub circuits_params: C,
     /// Block Context
     pub block_ctx: BlockContext,
-    /// Chunk Context
-    pub chunk_ctx: ChunkContext,
+    /// Chunk Contexts.  This is intended to be mimicking a stack with current
+    /// context available through `chunk_ctxs.last()` and `chunk_ctxs.last_mut()` .
+    pub chunk_ctxs: Vec<ChunkContext>,
 }
 
 impl<'a, C: CircuitsParams> CircuitInputBuilder<C> {
     /// Create a new CircuitInputBuilder from the given `eth_block` and
     /// `constants`.
     pub fn new(sdb: StateDB, code_db: CodeDB, block: Block, params: C) -> Self {
+        let total_rw_count: usize = block.txs.iter().map(|tx| tx.steps().len()).sum();
+        let chunk_size = 42;
+        let total_chunks = (total_rw_count + chunk_size - 1) / chunk_size; // div_ceil is nightly only.
+        // This wont work, because we don't really know how many chunks we will have.
+        let chunk_ctxs = (0..total_chunks).map(|i| ChunkContext::new(i, total_chunks)).collect_vec();
         Self {
             sdb,
             code_db,
             block,
             circuits_params: params,
             block_ctx: BlockContext::new(),
-            // TODO support multiple chunk
-            chunk_ctx: ChunkContext::new_one_chunk(),
+            chunk_ctxs,
         }
     }
 
@@ -168,7 +178,7 @@ impl<'a, C: CircuitsParams> CircuitInputBuilder<C> {
             code_db: &mut self.code_db,
             block: &mut self.block,
             block_ctx: &mut self.block_ctx,
-            chunk_ctx: &mut self.chunk_ctx,
+            chunk_ctxs: &mut self.chunk_ctxs,
             tx,
             tx_ctx,
         }
@@ -237,8 +247,8 @@ impl<'a, C: CircuitsParams> CircuitInputBuilder<C> {
         is_last_tx: bool,
         tx_index: u64,
     ) -> Result<(), Error> {
-        let mut tx = self.new_tx(tx_index, eth_tx, !geth_trace.failed)?;
-        let mut tx_ctx = TransactionContext::new(eth_tx, geth_trace, is_last_tx)?;
+        let mut tx: Transaction = self.new_tx(tx_index, eth_tx, !geth_trace.failed)?;
+        let mut tx_ctx: TransactionContext = TransactionContext::new(eth_tx, geth_trace, is_last_tx)?;
 
         // Generate BeginTx step
         let begin_tx_step = gen_associated_steps(
@@ -247,10 +257,38 @@ impl<'a, C: CircuitsParams> CircuitInputBuilder<C> {
         )?;
         tx.steps_mut().push(begin_tx_step);
 
+        let state_ref = self.state_ref(&mut tx, &mut tx_ctx);
+        let _block_rwc: usize = state_ref.block_ctx.rwc.into();
+        let _tx_rwc: usize = tx.steps().last().unwrap().rwc.into();
+        // let tx_rwc_inner = tx.steps().last().unwrap().rwc_inner_chunk.into();
+        let _tx_rwc_inner = 42; // tx.steps().last().unwrap().rwc_inner_chunk.into();
+        //dbg!("handle_tx", block_rwc, tx_rwc, tx_rwc_inner);
+        // what is the correct chunking condition?
+        // let chunk_condition = MAX_CHUNK_SIZE < tx_rwc_inner;
+        let chunk_condition = true;
+        if chunk_condition {
+            // Here we are inside the tx where we can inject an `EndChunk` `BeginChunk` pair if
+            // global `RWCounter` is too high. If we do it before the loop, we are
+            // always chunking in the beginning of a transaction, which may not be
+            // optimal.
+            let mut state_ref = self.state_ref(&mut tx, &mut tx_ctx);
+            log::trace!("Chunk :: injecting `EndChunk` `BeginChunk` sequence.");
+            let end_step = state_ref.new_end_chunk_step();
+            let begin_step = state_ref.new_begin_chunk_step();
+            state_ref.tx.steps_mut().extend([end_step, begin_step]);
+
+            // push chunk_ctx
+            log::trace!("Chunk :: pushing `ChunkCtx`");
+            let chunk_index = state_ref.chunk_ctxs.len();
+            let total_chunks =  state_ref.chunk_ctxs.len()+1;
+            let ctx: ChunkContext = ChunkContext::new(chunk_index, total_chunks);
+            state_ref.push_chunk_ctx(ctx);
+        }
+
         for (index, geth_step) in geth_trace.struct_logs.iter().enumerate() {
             let mut state_ref = self.state_ref(&mut tx, &mut tx_ctx);
             log::trace!("handle {}th opcode {:?} ", index, geth_step.op);
-            let exec_steps = gen_associated_ops(
+            let exec_steps: Vec<ExecStep> = gen_associated_ops(
                 &geth_step.op,
                 &mut state_ref,
                 &geth_trace.struct_logs[index..],
@@ -289,7 +327,7 @@ impl<'a, C: CircuitsParams> CircuitInputBuilder<C> {
             .collect::<Vec<RWCounter>>();
         // just bump rwc in chunk_ctx as block_ctx rwc to assure same delta apply
         let rw_counters_inner_chunk = (0..tags.len())
-            .map(|_| self.chunk_ctx.rwc.inc_pre())
+            .map(|_| self.chunk_ctxs.last_mut().unwrap().rwc.inc_pre())
             .collect::<Vec<RWCounter>>();
         let mut begin_chunk = self.block.block_steps.begin_chunk.clone();
         let state = self.state_ref(&mut dummy_tx, &mut dummy_tx_ctx);
@@ -334,9 +372,9 @@ impl CircuitInputBuilder<FixedCParams> {
         let mut end_block_last = self.block.block_steps.end_block_last.clone();
         end_block_not_last.rwc = self.block_ctx.rwc;
         end_block_last.rwc = self.block_ctx.rwc;
-        end_block_not_last.rwc_inner_chunk = self.chunk_ctx.rwc;
-        end_block_last.rwc_inner_chunk = self.chunk_ctx.rwc;
-        let is_first_chunk = self.chunk_ctx.chunk_index == 0;
+        end_block_not_last.rwc_inner_chunk = RWCounter::default();
+        end_block_last.rwc_inner_chunk = RWCounter::default();
+        let is_first_chunk = self.chunk_ctxs.len()==1;
 
         let mut dummy_tx = Transaction::default();
         let mut dummy_tx_ctx = TransactionContext::default();
@@ -422,7 +460,7 @@ impl<C: CircuitsParams> CircuitInputBuilder<C> {
         eth_block: &EthBlock,
         geth_traces: &[eth_types::GethExecTrace],
     ) -> Result<(), Error> {
-        if self.chunk_ctx.chunk_index > 0 {
+        if self.chunk_ctxs.len() > 0 {
             self.set_begin_chunk();
         }
 
@@ -516,7 +554,7 @@ impl CircuitInputBuilder<DynamicCParams> {
             block: self.block,
             circuits_params: c_params,
             block_ctx: self.block_ctx,
-            chunk_ctx: self.chunk_ctx,
+            chunk_ctxs: self.chunk_ctxs,
         };
 
         cib.set_end_block(c_params.max_rws);
